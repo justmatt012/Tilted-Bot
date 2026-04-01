@@ -1,0 +1,17 @@
+{
+  "name": "tilted-bot",
+  "version": "1.0.0",
+  "description": "Bot de Discord para Tilted Staff",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "express": "^4.18.2",
+    "cors": "^2.8.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

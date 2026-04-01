@@ -110,24 +110,26 @@ function toAttachment(b64, i) {
     } catch(e) { return null; }
 }
 
-// ── Botones ──
-function makeButtons() {
+// ── Botones (solo para SS) ──
+function makeSSButtons() {
     const uid = crypto.randomUUID().slice(0,8);
     return new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`ok_${uid}`).setLabel('✅ Confirmado').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`ok_${uid}`).setLabel('✅ Confirmar').setStyle(ButtonStyle.Success),
         new ButtonBuilder().setCustomId(`no_${uid}`).setLabel('❌ Rechazar').setStyle(ButtonStyle.Danger)
     );
 }
 
 // ── Enviar al canal ──
-async function send(channelId, embed, formato, imagenes) {
+async function send(channelId, embed, formato, imagenes, withButtons=false) {
     if (!channelId) return { error: 'Canal no configurado' };
     try {
         const ch    = await client.channels.fetch(channelId);
         const files = (imagenes||[]).map((b,i)=>toAttachment(b,i)).filter(Boolean);
-        await ch.send({ embeds:[embed], components:[makeButtons()], files: files.length?[files[0]]:[] });
-        for (let i=1;i<files.length;i++) await ch.send({ files:[files[i]] });
+        // Mandar el formato de texto PRIMERO (arriba del embed)
         if (formato) await ch.send({ content: formato });
+        // Solo SS lleva botones
+        const components = withButtons ? [makeSSButtons()] : [];
+        await ch.send({ embeds:[embed], components, files });
         return { ok: true };
     } catch(e) { console.error('send:', e.message); return { error: e.message }; }
 }
@@ -217,9 +219,19 @@ client.on('interactionCreate', async interaction => {
         try {
             const orig = interaction.message.embeds[0];
             if (!orig) return;
+            // Ponemos ✅ o ❌ al inicio del título
+            const oldTitle = orig.title || '';
+            // Quitar cualquier ✅/❌ previo del título por si ya fue procesado
+            const cleanTitle = oldTitle.replace(/^[✅❌]\s*/, '');
+            const newTitle = ok ? `✅ ${cleanTitle}` : `❌ ${cleanTitle}`;
             await interaction.update({
-                embeds:[EmbedBuilder.from(orig).setColor(ok?0x43B581:0x747F8D).setFooter({text:`${ok?'✅ Confirmado':'❌ Rechazado'} por ${interaction.user.username}`})],
-                components:[]
+                embeds: [
+                    EmbedBuilder.from(orig)
+                        .setTitle(newTitle)
+                        .setColor(ok ? 0x43B581 : 0xFF0000)
+                        .setFooter({ text: `${ok ? '✅ Confirmado' : '❌ Rechazado'} por ${interaction.user.username}` })
+                ],
+                components: []
             });
         } catch(e) { console.error('Button:', e.message); }
         return;
@@ -241,22 +253,22 @@ app.get('/', (req,res) => res.json({ status:'online', bot:client.user?.tag||'con
 app.post('/sancion', auth, async (req,res) => {
     const {staff,modalidad,razon,tiempo,nick,imagenes,formato}=req.body;
     await addStat(staff,'sanciones');
-    res.json(await send(CHANNEL_SANCIONES, embedSancion(staff,nick,modalidad,tiempo,razon), formato, imagenes));
+    res.json(await send(CHANNEL_SANCIONES, embedSancion(staff,nick,modalidad,tiempo,razon), formato, imagenes, false));
 });
 app.post('/ss', auth, async (req,res) => {
     const {staff,modalidad,razon,nick,imagenes,formato}=req.body;
     await addStat(staff,'ss');
-    res.json(await send(CHANNEL_SS, embedSS(staff,nick,modalidad,razon), formato, imagenes));
+    res.json(await send(CHANNEL_SS, embedSS(staff,nick,modalidad,razon), formato, imagenes, true));
 });
 app.post('/rollback', auth, async (req,res) => {
     const {staff,modalidad,nick,nick2,razon,tipo,imagenes,formato}=req.body;
     await addStat(staff,'rollbacks');
-    res.json(await send(CHANNEL_ROLLBACKS, embedRB(staff,modalidad,nick,nick2,razon,tipo), formato, imagenes));
+    res.json(await send(CHANNEL_ROLLBACKS, embedRB(staff,modalidad,nick,nick2,razon,tipo), formato, imagenes, false));
 });
 app.post('/mute', auth, async (req,res) => {
     const {staff,modalidad,nick,tiempo,razon,imagenes,formato}=req.body;
     await addStat(staff,'mutes');
-    res.json(await send(CHANNEL_MUTES, embedMute(staff,nick,modalidad,tiempo,razon), formato, imagenes));
+    res.json(await send(CHANNEL_MUTES, embedMute(staff,nick,modalidad,tiempo,razon), formato, imagenes, false));
 });
 app.post('/unbaneo', auth, async (req,res) => {
     const {staff,nick,razon,modalidad,imagenes,formato}=req.body;
@@ -267,7 +279,7 @@ app.post('/unbaneo', auth, async (req,res) => {
             {name:'🎮 Modalidad',value:s(modalidad),inline:true},
             {name:'📋 Razón',value:s(razon),inline:false}
         ).setTimestamp().setFooter({text:'Tilted Staff'});
-    res.json(await send(CHANNEL_SANCIONES, embed, formato, imagenes));
+    res.json(await send(CHANNEL_SANCIONES, embed, formato, imagenes, false));
 });
 app.post('/ss-appeal', auth, async (req,res) => {
     const {staff,nick,razon,modalidad,pruebas,imagenes,formato}=req.body;
@@ -279,7 +291,7 @@ app.post('/ss-appeal', auth, async (req,res) => {
             {name:'🎮 Modalidad',value:s(modalidad),inline:true},
             {name:'📋 Razón',value:s(razon),inline:false}
         ).setTimestamp().setFooter({text:'Tilted Staff • SS Appeal'});
-    res.json(await send(CHANNEL_SS, embed, formato, imagenes));
+    res.json(await send(CHANNEL_SS, embed, formato, imagenes, true));
 });
 app.post('/ss-clean', auth, async (req,res) => {
     const {staff,nick,imagenes,formato}=req.body;
@@ -289,7 +301,7 @@ app.post('/ss-clean', auth, async (req,res) => {
             {name:'👤 Staff',value:s(staff),inline:true},
             {name:'🎯 Nick',value:s(nick),inline:true}
         ).setTimestamp().setFooter({text:'Tilted Staff • SS Clean'});
-    res.json(await send(CHANNEL_SS, embed, formato, imagenes));
+    res.json(await send(CHANNEL_SS, embed, formato, imagenes, true));
 });
 app.post('/ss-notes', auth, async (req,res) => {
     const {staff,nick,motivo,imagenes,formato}=req.body;
@@ -300,7 +312,7 @@ app.post('/ss-notes', auth, async (req,res) => {
             {name:'🎯 Nick',value:s(nick),inline:true},
             {name:'📋 Motivo',value:s(motivo),inline:false}
         ).setTimestamp().setFooter({text:'Tilted Staff • SS Notes'});
-    res.json(await send(CHANNEL_SS, embed, formato, imagenes));
+    res.json(await send(CHANNEL_SS, embed, formato, imagenes, true));
 });
 
 // ── Registrar slash commands ──

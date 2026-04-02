@@ -1,7 +1,6 @@
 require('dotenv').config();
 const {
     Client, GatewayIntentBits, EmbedBuilder,
-    ActionRowBuilder, ButtonBuilder, ButtonStyle,
     ActivityType, REST, Routes, SlashCommandBuilder,
     AttachmentBuilder
 } = require('discord.js');
@@ -107,74 +106,47 @@ function toAttachment(b64, i) {
     } catch(e) { return null; }
 }
 
-// Botones — solo SS Ban, SS Appeal, SS Notes
-function makeSSButtons() {
-    const uid = crypto.randomUUID().slice(0,8);
-    return new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`ok_${uid}`).setLabel('Confirmar').setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId(`no_${uid}`).setLabel('Rechazar').setStyle(ButtonStyle.Danger)
-    );
-}
-
-// Enviar — sin formato separado, pruebas ya dentro del embed, imagenes adjuntas abajo
-async function send(channelId, embed, imagenes, withButtons=false) {
+// Enviar — embed primero, luego fotos en mensaje separado para que queden abajo
+async function send(channelId, embed, imagenes) {
     if (!channelId) return { error: 'Canal no configurado' };
     try {
-        const ch         = await client.channels.fetch(channelId);
-        const files      = (imagenes||[]).map((b,i)=>toAttachment(b,i)).filter(Boolean);
-        const components = withButtons ? [makeSSButtons()] : [];
-        await ch.send({ embeds:[embed], components, files });
+        const ch = await client.channels.fetch(channelId);
+        await ch.send({ embeds:[embed] });
+        const files = (imagenes||[]).map((b,i)=>toAttachment(b,i)).filter(Boolean);
+        if (files.length > 0) await ch.send({ files });
         return { ok: true };
     } catch(e) { console.error('send:', e.message); return { error: e.message }; }
 }
 
-// Embed builders — pruebas dentro del embed
+// Embed builders — description en bloque de código
+function desc(lines) { return '```\n' + lines + '\n```'; }
+
 function embedSancion(staff, nick, modalidad, tiempo, razon, pruebas) {
     return new EmbedBuilder().setColor(0xFF4444).setTitle('🚫 Nueva Sanción')
-        .addFields(
-            { name:'👤 Staff',    value:s(staff),    inline:true  },
-            { name:'🎯 Nick',     value:s(nick),     inline:true  },
-            { name:'🎮 Modalidad',value:s(modalidad),inline:true  },
-            { name:'⏱️ Tiempo',   value:s(tiempo),   inline:true  },
-            { name:'📋 Razón',    value:s(razon),    inline:false },
-            { name:'🔗 Pruebas',  value:s(pruebas),  inline:false }
-        ).setTimestamp().setFooter({ text:`Ejecutado por ${staff} • Tilted Staff` });
+        .setDescription(desc(
+            `Nick: ${s(nick)}\nRazon: ${s(razon)}\nTiempo: ${s(tiempo)}\nModalidad: ${s(modalidad)}\nPruebas: ${pruebas||''}`
+        )).setTimestamp().setFooter({ text:`Ejecutado por ${staff} • Tilted Staff` });
 }
 
 function embedSS(staff, nick, modalidad, razon, pruebas) {
     return new EmbedBuilder().setColor(0x9B59B6).setTitle('🖥️ SS Ban')
-        .addFields(
-            { name:'👤 Staff',    value:s(staff),    inline:true  },
-            { name:'🎯 Nick',     value:s(nick),     inline:true  },
-            { name:'🎮 Modalidad',value:s(modalidad),inline:true  },
-            { name:'📋 Razón SS', value:s(razon),    inline:false },
-            { name:'🔗 Pruebas',  value:s(pruebas),  inline:false }
-        ).setTimestamp().setFooter({ text:`Ejecutado por ${staff} • SS Ban` });
+        .setDescription(desc(
+            `Nick: ${s(nick)}\nRazon: ${s(razon)}\nModalidad: ${s(modalidad)}\nPruebas: ${pruebas||''}`
+        )).setTimestamp().setFooter({ text:`Ejecutado por ${staff} • SS Ban` });
 }
 
 function embedRB(staff, modalidad, nick, nick2, razon, tipo) {
     return new EmbedBuilder().setColor(0x7289DA).setTitle(`🔄 Rollback ${tipo==='online'?'🟢 Online':'🔴 Offline'}`)
-        .addFields(
-            { name:'👤 Staff',           value:s(staff),    inline:true  },
-            { name:'🎮 Modalidad',        value:s(modalidad),inline:true  },
-            { name:'\u200B',              value:'\u200B',    inline:true  },
-            { name:'🎯 Nick afectado',    value:s(nick),     inline:true  },
-            { name:'🤝 Nick involucrado', value:s(nick2),    inline:true  },
-            { name:'\u200B',              value:'\u200B',    inline:true  },
-            { name:'📋 Razón',            value:s(razon),    inline:false }
-        ).setTimestamp().setFooter({ text:`Ejecutado por ${staff} • Tilted Staff` });
+        .setDescription(desc(
+            `Nick: ${s(nick)}\nNick involucrado: ${s(nick2)}\nModalidad: ${s(modalidad)}\nRazon: ${s(razon)}`
+        )).setTimestamp().setFooter({ text:`Ejecutado por ${staff} • Tilted Staff` });
 }
 
 function embedMute(staff, nick, modalidad, tiempo, razon, pruebas) {
     return new EmbedBuilder().setColor(0xF39C12).setTitle('🔇 Nuevo Mute')
-        .addFields(
-            { name:'👤 Staff',    value:s(staff),    inline:true  },
-            { name:'🎯 Nick',     value:s(nick),     inline:true  },
-            { name:'🎮 Modalidad',value:s(modalidad),inline:true  },
-            { name:'⏱️ Tiempo',   value:s(tiempo),   inline:true  },
-            { name:'📋 Razón',    value:s(razon),    inline:false },
-            { name:'🔗 Pruebas',  value:s(pruebas),  inline:false }
-        ).setTimestamp().setFooter({ text:`Ejecutado por ${staff} • Tilted Staff` });
+        .setDescription(desc(
+            `Nick: ${s(nick)}\nRazon: ${s(razon)}\nTiempo: ${s(tiempo)}\nModalidad: ${s(modalidad)}\nPruebas: ${pruebas||''}`
+        )).setTimestamp().setFooter({ text:`Ejecutado por ${staff} • Tilted Staff` });
 }
 
 // Leaderboard embed
@@ -206,26 +178,7 @@ function buildLBEmbed(data, cat, periodo) {
 
 // Interacciones
 client.on('interactionCreate', async interaction => {
-    if (interaction.isButton()) {
-        if (!interaction.customId.startsWith('ok_') && !interaction.customId.startsWith('no_')) return;
-        const ok = interaction.customId.startsWith('ok_');
-        try {
-            const orig = interaction.message.embeds[0];
-            if (!orig) return;
-            const cleanTitle = (orig.title||'').replace(/^[✅❌]\s*/, '');
-            const newTitle   = ok ? `✅ ${cleanTitle}` : `❌ ${cleanTitle}`;
-            await interaction.update({
-                embeds: [
-                    EmbedBuilder.from(orig)
-                        .setTitle(newTitle)
-                        .setColor(ok ? 0x43B581 : 0xFF0000)
-                        .setFooter({ text:`${ok ? '✅ Confirmado' : '❌ Rechazado'} por ${interaction.user.username}` })
-                ],
-                components: []
-            });
-        } catch(e) { console.error('Button:', e.message); }
-        return;
-    }
+
     if (!interaction.isChatInputCommand()) return;
     const cmd = interaction.commandName;
     if (['top-semanal','top-mensual','top-ss-semanal','top-ss-mensual'].includes(cmd)) {
@@ -267,50 +220,40 @@ app.post('/mute', auth, async (req,res) => {
 app.post('/unbaneo', auth, async (req,res) => {
     const { staff, nick, razon, modalidad, imagenes } = req.body;
     const embed = new EmbedBuilder().setColor(0x43B581).setTitle('🔓 Unbaneo')
-        .addFields(
-            { name:'👤 Staff',    value:s(staff),    inline:true  },
-            { name:'🎯 Nick',     value:s(nick),     inline:true  },
-            { name:'🎮 Modalidad',value:s(modalidad),inline:true  },
-            { name:'📋 Razón',    value:s(razon),    inline:false }
-        ).setTimestamp().setFooter({ text:`Ejecutado por ${staff} • Tilted Staff` });
-    res.json(await send(CHANNEL_SANCIONES, embed, imagenes, false));
+        .setDescription(desc(
+            `Nick: ${s(nick)}\nRazon: ${s(razon)}\nModalidad: ${s(modalidad)}`
+        )).setTimestamp().setFooter({ text:`Ejecutado por ${staff} • Tilted Staff` });
+    res.json(await send(CHANNEL_SANCIONES, embed, imagenes));
 });
 
 app.post('/ss-appeal', auth, async (req,res) => {
     const { staff, nick, razon, modalidad, pruebas, imagenes } = req.body;
     await addStat(staff,'ss-appeal');
     const embed = new EmbedBuilder().setColor(0xE67E22).setTitle('📨 SS Appeal')
-        .addFields(
-            { name:'👤 Staff',    value:s(staff),    inline:true  },
-            { name:'🎯 Nick',     value:s(nick),     inline:true  },
-            { name:'🎮 Modalidad',value:s(modalidad),inline:true  },
-            { name:'📋 Razón',    value:s(razon),    inline:false },
-            { name:'🔗 Pruebas',  value:s(pruebas),  inline:false }
-        ).setTimestamp().setFooter({ text:`Ejecutado por ${staff} • SS Appeal` });
-    res.json(await send(CHANNEL_SS, embed, imagenes, true));
+        .setDescription(desc(
+            `Nick: ${s(nick)}\nRazon: ${s(razon)}\nModalidad: ${s(modalidad)}\nPruebas: ${pruebas||''}`
+        )).setTimestamp().setFooter({ text:`Ejecutado por ${staff} • SS Appeal` });
+    res.json(await send(CHANNEL_SS, embed, imagenes));
 });
 
 app.post('/ss-clean', auth, async (req,res) => {
     const { staff, nick, imagenes } = req.body;
     await addStat(staff,'ss-clean');
     const embed = new EmbedBuilder().setColor(0x43B581).setTitle('✅ SS Clean')
-        .addFields(
-            { name:'👤 Staff', value:s(staff), inline:true },
-            { name:'🎯 Nick',  value:s(nick),  inline:true }
-        ).setTimestamp().setFooter({ text:`Ejecutado por ${staff} • SS Clean` });
-    res.json(await send(CHANNEL_SS, embed, imagenes, false));
+        .setDescription(desc(
+            `Nick: ${s(nick)}`
+        )).setTimestamp().setFooter({ text:`Ejecutado por ${staff} • SS Clean` });
+    res.json(await send(CHANNEL_SS, embed, imagenes));
 });
 
 app.post('/ss-notes', auth, async (req,res) => {
     const { staff, nick, motivo, imagenes } = req.body;
     await addStat(staff,'ss-notes');
     const embed = new EmbedBuilder().setColor(0x3498DB).setTitle('📝 SS Notes')
-        .addFields(
-            { name:'👤 Staff',  value:s(staff),  inline:true  },
-            { name:'🎯 Nick',   value:s(nick),   inline:true  },
-            { name:'📋 Motivo', value:s(motivo), inline:false }
-        ).setTimestamp().setFooter({ text:`Ejecutado por ${staff} • SS Notes` });
-    res.json(await send(CHANNEL_SS, embed, imagenes, true));
+        .setDescription(desc(
+            `Nick: ${s(nick)}\nMotivo: ${s(motivo)}`
+        )).setTimestamp().setFooter({ text:`Ejecutado por ${staff} • SS Notes` });
+    res.json(await send(CHANNEL_SS, embed, imagenes));
 });
 
 // Registrar slash commands
@@ -339,4 +282,23 @@ connectRedis().then(() => {
     client.login(BOT_TOKEN).then(() => {
         app.listen(PORT, () => console.log(`API en puerto ${PORT}`));
     }).catch(err => { console.error('Login:', err.message); process.exit(1); });
+});
+
+// ── Forzar re-registro de comandos via HTTP ──
+app.post('/register-commands', auth, async (req,res) => {
+    if (!CLIENT_ID || !GUILD_ID) return res.json({ error: 'Falta CLIENT_ID o GUILD_ID en .env' });
+    const commands = [
+        new SlashCommandBuilder().setName('top-semanal').setDescription('Ranking semanal del staff').toJSON(),
+        new SlashCommandBuilder().setName('top-mensual').setDescription('Ranking mensual del staff').toJSON(),
+        new SlashCommandBuilder().setName('top-ss-semanal').setDescription('Ranking semanal de SS').toJSON(),
+        new SlashCommandBuilder().setName('top-ss-mensual').setDescription('Ranking mensual de SS').toJSON(),
+    ];
+    const rest = new REST({ version:'10' }).setToken(BOT_TOKEN);
+    try {
+        await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
+        res.json({ ok: true, message: '4 slash commands registrados correctamente' });
+    } catch(e) {
+        console.error('register-commands:', e.message);
+        res.json({ error: e.message });
+    }
 });

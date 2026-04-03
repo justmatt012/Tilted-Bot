@@ -152,37 +152,40 @@ async function send(channelId, embed, imagenes) {
 function embedSancion(staff, nick, modalidad, tiempo, razon, pruebas) {
     return new EmbedBuilder()
         .setColor(0xFF4444)
+        .setAuthor({ name: `Ejecutado por ${staff}`, iconURL: skinUrl(staff) })
         .setTitle('🚫 Nueva Sanción')
         .setThumbnail(skinUrl(nick || staff))
         .addFields(
-            { name: '👤 Nick',       value: s(nick),       inline: true  },
-            { name: '🎮 Modalidad',  value: s(modalidad),  inline: true  },
-            { name: '⏱️ Tiempo',     value: s(tiempo),     inline: true  },
-            { name: '📋 Razón',      value: s(razon),      inline: false },
-            { name: '🔗 Pruebas',    value: s(pruebas) || '—', inline: false },
+            { name: '👤 Nick',       value: s(nick),            inline: true  },
+            { name: '🎮 Modalidad',  value: s(modalidad),       inline: true  },
+            { name: '⏱️ Tiempo',     value: s(tiempo),          inline: true  },
+            { name: '📋 Razón',      value: s(razon),           inline: false },
+            { name: '🔗 Pruebas',    value: s(pruebas) || '—',  inline: false },
         )
         .setTimestamp()
-        .setFooter({ text: `Ejecutado por ${staff} • Tilted Staff` });
+        .setFooter({ text: 'Tilted Staff' });
 }
 
 function embedSS(staff, nick, modalidad, razon, pruebas) {
     return new EmbedBuilder()
         .setColor(0x9B59B6)
+        .setAuthor({ name: `Ejecutado por ${staff}`, iconURL: skinUrl(staff) })
         .setTitle('🖥️ SS Ban')
         .setThumbnail(skinUrl(nick || staff))
         .addFields(
-            { name: '👤 Nick',       value: s(nick),       inline: true  },
-            { name: '🎮 Modalidad',  value: s(modalidad),  inline: true  },
-            { name: '📋 Razón',      value: s(razon),      inline: false },
-            { name: '🔗 Pruebas',    value: s(pruebas) || '—', inline: false },
+            { name: '👤 Nick',       value: s(nick),            inline: true  },
+            { name: '🎮 Modalidad',  value: s(modalidad),       inline: true  },
+            { name: '📋 Razón',      value: s(razon),           inline: false },
+            { name: '🔗 Pruebas',    value: s(pruebas) || '—',  inline: false },
         )
         .setTimestamp()
-        .setFooter({ text: `Ejecutado por ${staff} • SS Ban` });
+        .setFooter({ text: 'Tilted Staff • SS Ban' });
 }
 
 function embedRB(staff, modalidad, nick, nick2, razon, tipo) {
     return new EmbedBuilder()
-        .setColor(0x7289DA)
+        .setColor(tipo === 'online' ? 0x2ECC71 : 0xE74C3C)
+        .setAuthor({ name: `Ejecutado por ${staff}`, iconURL: skinUrl(staff) })
         .setTitle(`🔄 Rollback ${tipo==='online' ? '🟢 Online' : '🔴 Offline'}`)
         .setThumbnail(skinUrl(nick || staff))
         .addFields(
@@ -192,23 +195,24 @@ function embedRB(staff, modalidad, nick, nick2, razon, tipo) {
             { name: '📋 Razón',             value: s(razon),      inline: false },
         )
         .setTimestamp()
-        .setFooter({ text: `Ejecutado por ${staff} • Tilted Staff` });
+        .setFooter({ text: 'Tilted Staff' });
 }
 
 function embedMute(staff, nick, modalidad, tiempo, razon, pruebas) {
     return new EmbedBuilder()
         .setColor(0xF39C12)
+        .setAuthor({ name: `Ejecutado por ${staff}`, iconURL: skinUrl(staff) })
         .setTitle('🔇 Nuevo Mute')
         .setThumbnail(skinUrl(nick || staff))
         .addFields(
-            { name: '👤 Nick',       value: s(nick),       inline: true  },
-            { name: '🎮 Modalidad',  value: s(modalidad),  inline: true  },
-            { name: '⏱️ Tiempo',     value: s(tiempo),     inline: true  },
-            { name: '📋 Razón',      value: s(razon),      inline: false },
-            { name: '🔗 Pruebas',    value: s(pruebas) || '—', inline: false },
+            { name: '👤 Nick',       value: s(nick),            inline: true  },
+            { name: '🎮 Modalidad',  value: s(modalidad),       inline: true  },
+            { name: '⏱️ Tiempo',     value: s(tiempo),          inline: true  },
+            { name: '📋 Razón',      value: s(razon),           inline: false },
+            { name: '🔗 Pruebas',    value: s(pruebas) || '—',  inline: false },
         )
         .setTimestamp()
-        .setFooter({ text: `Ejecutado por ${staff} • Tilted Staff` });
+        .setFooter({ text: 'Tilted Staff' });
 }
 
 // ── Leaderboard ────────────────────────────────────────────────────────────
@@ -297,6 +301,7 @@ app.post('/unbaneo', auth, async (req,res) => {
     const { staff, nick, razon, modalidad, imagenes } = req.body;
     const embed = new EmbedBuilder()
         .setColor(0x43B581)
+        .setAuthor({ name: `Ejecutado por ${staff}`, iconURL: skinUrl(staff) })
         .setTitle('🔓 Unbaneo')
         .setThumbnail(skinUrl(nick || staff))
         .addFields(
@@ -305,7 +310,7 @@ app.post('/unbaneo', auth, async (req,res) => {
             { name: '📋 Razón',     value: s(razon),     inline: false },
         )
         .setTimestamp()
-        .setFooter({ text: `Ejecutado por ${staff} • Tilted Staff` });
+        .setFooter({ text: `Tilted Staff` });
     res.json(await send(CHANNEL_SANCIONES, embed, imagenes));
 });
 
@@ -314,6 +319,7 @@ app.post('/ss-appeal', auth, async (req,res) => {
     await addStat(staff, 'ss-appeal');
     const embed = new EmbedBuilder()
         .setColor(0xE67E22)
+        .setAuthor({ name: `Ejecutado por ${staff}`, iconURL: skinUrl(staff) })
         .setTitle('📨 SS Appeal')
         .setThumbnail(skinUrl(nick || staff))
         .addFields(
@@ -323,7 +329,7 @@ app.post('/ss-appeal', auth, async (req,res) => {
             { name: '🔗 Pruebas',    value: s(pruebas) || '—', inline: false },
         )
         .setTimestamp()
-        .setFooter({ text: `Ejecutado por ${staff} • SS Appeal` });
+        .setFooter({ text: `Tilted Staff • SS Appeal` });
     res.json(await send(CHANNEL_SS, embed, imagenes));
 });
 
@@ -332,13 +338,14 @@ app.post('/ss-clean', auth, async (req,res) => {
     await addStat(staff, 'ss-clean');
     const embed = new EmbedBuilder()
         .setColor(0x43B581)
+        .setAuthor({ name: `Ejecutado por ${staff}`, iconURL: skinUrl(staff) })
         .setTitle('✅ SS Clean')
         .setThumbnail(skinUrl(nick || staff))
         .addFields(
             { name: '👤 Nick', value: s(nick), inline: true },
         )
         .setTimestamp()
-        .setFooter({ text: `Ejecutado por ${staff} • SS Clean` });
+        .setFooter({ text: `Tilted Staff • SS Clean` });
     res.json(await send(CHANNEL_SS, embed, imagenes));
 });
 
@@ -347,6 +354,7 @@ app.post('/ss-notes', auth, async (req,res) => {
     await addStat(staff, 'ss-notes');
     const embed = new EmbedBuilder()
         .setColor(0x3498DB)
+        .setAuthor({ name: `Ejecutado por ${staff}`, iconURL: skinUrl(staff) })
         .setTitle('📝 SS Notes')
         .setThumbnail(skinUrl(nick || staff))
         .addFields(
@@ -354,7 +362,7 @@ app.post('/ss-notes', auth, async (req,res) => {
             { name: '📋 Motivo', value: s(motivo), inline: false },
         )
         .setTimestamp()
-        .setFooter({ text: `Ejecutado por ${staff} • SS Notes` });
+        .setFooter({ text: `Tilted Staff • SS Notes` });
     res.json(await send(CHANNEL_SS, embed, imagenes));
 });
 

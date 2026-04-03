@@ -118,6 +118,11 @@ async function send(channelId, embed, imagenes) {
     } catch(e) { console.error('send:', e.message); return { error: e.message }; }
 }
 
+// URL de skin del staff via Crafatar
+function skinUrl(nick) {
+    return `https://mc-heads.net/avatar/${encodeURIComponent(nick)}/128`;
+}
+
 // Embed builders — description en bloque de código
 function desc(lines) { return '```\n' + lines + '\n```'; }
 
@@ -125,55 +130,67 @@ function embedSancion(staff, nick, modalidad, tiempo, razon, pruebas) {
     return new EmbedBuilder().setColor(0xFF4444).setTitle('🚫 Nueva Sanción')
         .setDescription(desc(
             `Nick: ${s(nick)}\nRazon: ${s(razon)}\nTiempo: ${s(tiempo)}\nModalidad: ${s(modalidad)}\nPruebas: ${pruebas||''}`
-        )).setTimestamp().setFooter({ text:`Ejecutado por ${staff} • Tilted Staff` });
+        )).setThumbnail(skinUrl(staff))
+        .setTimestamp().setFooter({ text:`Ejecutado por ${staff} • Tilted Staff` });
 }
 
 function embedSS(staff, nick, modalidad, razon, pruebas) {
     return new EmbedBuilder().setColor(0x9B59B6).setTitle('🖥️ SS Ban')
         .setDescription(desc(
             `Nick: ${s(nick)}\nRazon: ${s(razon)}\nModalidad: ${s(modalidad)}\nPruebas: ${pruebas||''}`
-        )).setTimestamp().setFooter({ text:`Ejecutado por ${staff} • SS Ban` });
+        )).setThumbnail(skinUrl(staff))
+        .setTimestamp().setFooter({ text:`Ejecutado por ${staff} • SS Ban` });
 }
 
 function embedRB(staff, modalidad, nick, nick2, razon, tipo) {
     return new EmbedBuilder().setColor(0x7289DA).setTitle(`🔄 Rollback ${tipo==='online'?'🟢 Online':'🔴 Offline'}`)
         .setDescription(desc(
             `Nick: ${s(nick)}\nNick involucrado: ${s(nick2)}\nModalidad: ${s(modalidad)}\nRazon: ${s(razon)}`
-        )).setTimestamp().setFooter({ text:`Ejecutado por ${staff} • Tilted Staff` });
+        )).setThumbnail(skinUrl(staff))
+        .setTimestamp().setFooter({ text:`Ejecutado por ${staff} • Tilted Staff` });
 }
 
 function embedMute(staff, nick, modalidad, tiempo, razon, pruebas) {
     return new EmbedBuilder().setColor(0xF39C12).setTitle('🔇 Nuevo Mute')
         .setDescription(desc(
             `Nick: ${s(nick)}\nRazon: ${s(razon)}\nTiempo: ${s(tiempo)}\nModalidad: ${s(modalidad)}\nPruebas: ${pruebas||''}`
-        )).setTimestamp().setFooter({ text:`Ejecutado por ${staff} • Tilted Staff` });
+        )).setThumbnail(skinUrl(staff))
+        .setTimestamp().setFooter({ text:`Ejecutado por ${staff} • Tilted Staff` });
 }
 
-// Leaderboard embed
+// Discord IDs para mentions en leaderboard
+const STAFF_DISCORD_IDS = {};
+function setDiscordId(staff, id) { if(staff && id) STAFF_DISCORD_IDS[staff] = id; }
+function mentionOrName(staff) {
+    return STAFF_DISCORD_IDS[staff] ? `<@${STAFF_DISCORD_IDS[staff]}>` : `**${staff}**`;
+}
+
+// Leaderboard embed — con mentions y formato limpio
 function buildLBEmbed(data, cat, periodo) {
-    const label    = periodo==='week' ? '📅 Semanal' : '🗓️ Mensual';
+    const label    = periodo==='week' ? 'Semanal' : 'Mensual';
     const reset    = periodo==='week' ? 'Resetea cada domingo' : 'Resetea cada fin de mes';
     const catLabel = cat==='ss' ? '🖥️ SS Staff' : '⚔️ Staff';
     const entries  = Object.entries(data);
     if (!entries.length) return new EmbedBuilder().setColor(0xF39C12)
-        .setTitle(`🏆 ${catLabel} — ${label}`).setDescription('No hay acciones aún.').setFooter({text:reset});
+        .setTitle(`🏆 ${catLabel} — Ranking ${label}`).setDescription('No hay acciones aún.').setFooter({text:reset});
     entries.sort((a,b)=>Object.values(b[1]).reduce((s,v)=>s+v,0)-Object.values(a[1]).reduce((s,v)=>s+v,0));
     const medals = ['🥇','🥈','🥉'];
     const lines = entries.map(([staff,stats],i) => {
         const total = Object.values(stats).reduce((s,v)=>s+v,0);
-        const medal = medals[i] || `**${i+1}.**`;
+        const medal = medals[i] || `\`#${String(i+1).padStart(2,'0')}\``;
+        const mention = mentionOrName(staff);
         if (cat==='ss') {
             const ban=stats['ss']||0, appeal=stats['ss-appeal']||0, clean=stats['ss-clean']||0, notes=stats['ss-notes']||0;
-            return `${medal} **${staff}** — ${total} total  *(🚫${ban} ban  📨${appeal} appeal  ✅${clean} clean  📝${notes} notes)*`;
+            return `${medal} ${mention} — **${total}** acciones\n> 🚫 \`${ban}\` ban  •  📨 \`${appeal}\` appeal  •  ✅ \`${clean}\` clean  •  📝 \`${notes}\` notes`;
         }
-        return `${medal} **${staff}** — ${total} total  *(🚫${stats.sanciones||0}  🔄${stats.rollbacks||0}  🔇${stats.mutes||0})*`;
-    }).join('\n');
+        return `${medal} ${mention} — **${total}** acciones\n> 🚫 \`${stats.sanciones||0}\` bans  •  🔄 \`${stats.rollbacks||0}\` rollbacks  •  🔇 \`${stats.mutes||0}\` mutes`;
+    }).join('\n\n');
     return new EmbedBuilder()
         .setColor(cat==='ss' ? 0x9B59B6 : (periodo==='week' ? 0xF39C12 : 0x7289DA))
-        .setTitle(`🏆 ${catLabel} — ${label}`)
+        .setTitle(`🏆 ${catLabel} — Ranking ${label}`)
         .setDescription(lines)
         .setTimestamp()
-        .setFooter({ text:`Tilted Staff • ${reset}` });
+        .setFooter({ text:`Tilted Staff  •  ${reset}` });
 }
 
 // Interacciones
@@ -194,27 +211,31 @@ app.get('/', (req,res) => res.json({ status:'online', bot:client.user?.tag||'con
 
 // Endpoints
 app.post('/sancion', auth, async (req,res) => {
-    const { staff, modalidad, razon, tiempo, nick, pruebas, imagenes } = req.body;
+    const { staff, modalidad, razon, tiempo, nick, pruebas, imagenes, discordId } = req.body;
+    if (discordId) setDiscordId(staff, discordId);
     await addStat(staff,'sanciones');
-    res.json(await send(CHANNEL_SANCIONES, embedSancion(staff,nick,modalidad,tiempo,razon,pruebas), imagenes, false));
+    res.json(await send(CHANNEL_SANCIONES, embedSancion(staff,nick,modalidad,tiempo,razon,pruebas), imagenes));
 });
 
 app.post('/ss', auth, async (req,res) => {
-    const { staff, modalidad, razon, nick, pruebas, imagenes } = req.body;
+    const { staff, modalidad, razon, nick, pruebas, imagenes, discordId } = req.body;
+    if (discordId) setDiscordId(staff, discordId);
     await addStat(staff,'ss');
-    res.json(await send(CHANNEL_SS, embedSS(staff,nick,modalidad,razon,pruebas), imagenes, true));
+    res.json(await send(CHANNEL_SS, embedSS(staff,nick,modalidad,razon,pruebas), imagenes));
 });
 
 app.post('/rollback', auth, async (req,res) => {
-    const { staff, modalidad, nick, nick2, razon, tipo, imagenes } = req.body;
+    const { staff, modalidad, nick, nick2, razon, tipo, imagenes, discordId } = req.body;
+    if (discordId) setDiscordId(staff, discordId);
     await addStat(staff,'rollbacks');
-    res.json(await send(CHANNEL_ROLLBACKS, embedRB(staff,modalidad,nick,nick2,razon,tipo), imagenes, false));
+    res.json(await send(CHANNEL_ROLLBACKS, embedRB(staff,modalidad,nick,nick2,razon,tipo), imagenes));
 });
 
 app.post('/mute', auth, async (req,res) => {
-    const { staff, modalidad, nick, tiempo, razon, pruebas, imagenes } = req.body;
+    const { staff, modalidad, nick, tiempo, razon, pruebas, imagenes, discordId } = req.body;
+    if (discordId) setDiscordId(staff, discordId);
     await addStat(staff,'mutes');
-    res.json(await send(CHANNEL_MUTES, embedMute(staff,nick,modalidad,tiempo,razon,pruebas), imagenes, false));
+    res.json(await send(CHANNEL_MUTES, embedMute(staff,nick,modalidad,tiempo,razon,pruebas), imagenes));
 });
 
 app.post('/unbaneo', auth, async (req,res) => {

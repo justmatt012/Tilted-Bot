@@ -705,24 +705,63 @@ app.post('/users/update-discord', auth, async (req, res) => {
 });
 
 // ── Auth endpoints ─────────────────────────────────────────────────────────
+const ACCESS_LOGS_KEY = 'sp:access_logs';
+
+async function saveAccessLog(username, ip, method) {
+    const entry = { username, ip, method, fecha: Date.now() };
+    if (redis) {
+        await redis.lPush(ACCESS_LOGS_KEY, JSON.stringify(entry));
+        await redis.lTrim(ACCESS_LOGS_KEY, 0, 199); // máximo 200 entradas
+    } else {
+        if (!global.accessLogs) global.accessLogs = [];
+        global.accessLogs.unshift(entry);
+        if (global.accessLogs.length > 200) global.accessLogs.pop();
+    }
+}
+
+async function getAccessLogs() {
+    if (redis) {
+        const raw = await redis.lRange(ACCESS_LOGS_KEY, 0, 99);
+        return raw.map(r => { try { return JSON.parse(r); } catch { return null; } }).filter(Boolean);
+    }
+    return (global.accessLogs || []).slice(0, 100);
+}
+
 app.post('/auth/login', async (req, res) => {
     const { username, password } = req.body;
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '—';
     if (!username || !password) return res.json({ error: 'Faltan datos' });
     const users = await getServerUsers();
     const found = users.find(u => u.username === username);
-    if (!found) return res.json({ error: 'Usuario o contraseña incorrectos' });
+    if (!found) {
+        await saveAccessLog(username, ip, 'failed');
+        return res.json({ error: 'Usuario o contraseña incorrectos' });
+    }
     const match = await bcrypt.compare(password, found.password).catch(() => false);
-    if (!match) return res.json({ error: 'Usuario o contraseña incorrectos' });
+    if (!match) {
+        await saveAccessLog(username, ip, 'failed');
+        return res.json({ error: 'Usuario o contraseña incorrectos' });
+    }
+    await saveAccessLog(username, ip, 'login');
     res.json({ ok: true, user: { username: found.username, role: found.role, discordId: found.discordId || '' } });
 });
 
+// También loguear acceso por Discord
 app.get('/auth/discord', async (req, res) => {
     const { discordId } = req.query;
     if (!discordId) return res.json({ error: 'Falta discordId' });
     const users = await getServerUsers();
     const found = users.find(u => u.discordId === discordId);
     if (!found) return res.json({ error: 'Discord ID no registrada' });
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '—';
+    await saveAccessLog(found.username, ip, 'discord');
     res.json({ ok: true, user: { username: found.username, role: found.role, discordId: found.discordId } });
+});
+
+// ── Endpoint para ver los logs (solo desde panel) ──────────────────────────
+app.get('/access-logs', auth, async (req, res) => {
+    const logs = await getAccessLogs();
+    res.json({ ok: true, logs });
 });
 
 app.post('/users/change-password', auth, async (req, res) => {
@@ -767,6 +806,9 @@ app.get('/top', async (req, res) => {
 });
 
 // ── Health check ───────────────────────────────────────────────────────────
+app.get('/health', (req, res) => {
+    res.json({ ok: true, status: 'online', uptime: process.uptime() });
+});
 app.get('/', (req,res) => res.json({ status:'online', bot:client.user?.tag||'conectando...' }));
 
 // ── Link Discord ID ────────────────────────────────────────────────────────

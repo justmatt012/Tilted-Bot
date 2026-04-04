@@ -7,7 +7,7 @@ const {
 const { createClient } = require('redis');
 const express = require('express');
 const cors    = require('cors');
-const bcrypt  = require('bcrypt');
+const bcrypt  = require('bcryptjs');
 const SALT_ROUNDS = 10;
 
 const client = new Client({

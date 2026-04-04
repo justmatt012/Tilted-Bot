@@ -508,13 +508,18 @@ app.post('/oauth/callback', async (req, res) => {
         });
         const tokenData = await tokenRes.json();
         console.log(`[OAuth] Token response en ${Date.now()-t1}ms:`, tokenData.error || 'OK');
-        if (!tokenData.access_token) return res.status(400).json({ error: 'Token inválido', detail: tokenData });
+        if (!tokenData.access_token) {
+            console.log('[OAuth] Token data completo:', JSON.stringify(tokenData));
+            return res.status(400).json({ error: 'Token inválido', detail: tokenData });
+        }
 
+        const t2 = Date.now();
         // Obtener info del usuario
         const userRes = await fetch('https://discord.com/api/users/@me', {
             headers: { Authorization: `Bearer ${tokenData.access_token}` }
         });
         const user = await userRes.json();
+        console.log(`[OAuth] User fetch en ${Date.now()-t2}ms, id: ${user.id}, username: ${user.username}`);
 
         const avatarUrl = user.avatar
             ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png?size=128`

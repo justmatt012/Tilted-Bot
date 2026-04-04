@@ -44,6 +44,30 @@ async function connectRedis() {
     console.log('Redis conectado');
 }
 
+// ── Users en servidor ─────────────────────────────────────────────────────
+const USERS_KEY = 'sp:users';
+
+async function getServerUsers() {
+    if (redis) {
+        const raw = await redis.get(USERS_KEY);
+        if (raw) return JSON.parse(raw);
+    } else {
+        if (!global.spUsers) global.spUsers = [
+            { username: 'admin', password: 'admin123', role: 'admin', discordId: '' }
+        ];
+        return global.spUsers;
+    }
+    return [{ username: 'admin', password: 'admin123', role: 'admin', discordId: '' }];
+}
+
+async function saveServerUsers(users) {
+    if (redis) {
+        await redis.set(USERS_KEY, JSON.stringify(users));
+    } else {
+        global.spUsers = users;
+    }
+}
+
 // ── Periodo keys ───────────────────────────────────────────────────────────
 function getWeekKey(tipo) {
     const n = new Date(), jan = new Date(n.getFullYear(),0,1);
@@ -372,6 +396,7 @@ async function buildLBEmbed(data, cat, periodo) {
         .setColor(color)
         .setTitle(`🏆 Ranking ${catLabel} — ${label}`)
         .setDescription(lines)
+        .setThumbnail(skinUrl(entries[0][0]))
         .setTimestamp()
         .setFooter({ text: `Tilted Staff  •  ${reset}` });
 }
@@ -416,7 +441,7 @@ client.on('interactionCreate', async interaction => {
         const embed = new EmbedBuilder()
             .setColor(0x5865F2)
             .setTitle(`📋 Historial de ${nick}`)
-            .setThumbnail(skinUrl(nick))
+            .setThumbnail(`https://minotar.net/avatar/${encodeURIComponent(nick)}/128`)
             .setDescription(lines)
             .setFooter({ text: `${entries.length} registro${entries.length !== 1 ? 's' : ''} total  •  Tilted Staff` })
             .setTimestamp();
@@ -445,6 +470,15 @@ client.on('interactionCreate', async interaction => {
         const ws = ssWeek[usuario]    || {};
         const ms = ssMonth[usuario]   || {};
         const mention = await resolveMention(usuario);
+        const map = await getDiscordMap();
+        const discordId = map[usuario];
+        let avatarUrl = null;
+        if (discordId) {
+            try {
+                const u = await client.users.fetch(discordId);
+                avatarUrl = u.displayAvatarURL({ size: 128 });
+            } catch {}
+        }
 
         const embed = new EmbedBuilder()
             .setColor(0xF39C12)
@@ -462,6 +496,7 @@ client.on('interactionCreate', async interaction => {
             )
             .setTimestamp()
             .setFooter({ text: 'Tilted Staff' });
+        if (avatarUrl) embed.setThumbnail(avatarUrl);
         await interaction.editReply({ embeds: [embed] });
     }
 
@@ -549,6 +584,64 @@ app.post('/oauth/callback', async (req, res) => {
     }
 });
 
+// ── User management endpoints ──────────────────────────────────────────────
+app.get('/users', auth, async (req, res) => {
+    const users = await getServerUsers();
+    // No mandar passwords al cliente
+    res.json(users.map(u => ({ username: u.username, role: u.role, discordId: u.discordId || '' })));
+});
+
+app.post('/users', auth, async (req, res) => {
+    const { username, password, role, discordId } = req.body;
+    if (!username || !password) return res.json({ error: 'Faltan datos' });
+    const users = await getServerUsers();
+    if (users.find(u => u.username === username)) return res.json({ error: 'Usuario ya existe' });
+    users.push({ username, password, role: role || 'staff', discordId: discordId || '' });
+    await saveServerUsers(users);
+    if (discordId) await setDiscordId(username, discordId);
+    res.json({ ok: true });
+});
+
+app.delete('/users', auth, async (req, res) => {
+    const { username } = req.body;
+    if (!username) return res.json({ error: 'Falta username' });
+    let users = await getServerUsers();
+    users = users.filter(u => u.username !== username);
+    await saveServerUsers(users);
+    res.json({ ok: true });
+});
+
+app.post('/users/update-discord', auth, async (req, res) => {
+    const { username, discordId } = req.body;
+    if (!username || !discordId) return res.json({ error: 'Faltan datos' });
+    const users = await getServerUsers();
+    const u = users.find(u => u.username === username);
+    if (!u) return res.json({ error: 'Usuario no encontrado' });
+    u.discordId = discordId;
+    await saveServerUsers(users);
+    await setDiscordId(username, discordId);
+    res.json({ ok: true });
+});
+
+// ── Auth endpoints ─────────────────────────────────────────────────────────
+app.post('/auth/login', async (req, res) => {
+    const { username, password } = req.body;
+    if (!username || !password) return res.json({ error: 'Faltan datos' });
+    const users = await getServerUsers();
+    const found = users.find(u => u.username === username && u.password === password);
+    if (!found) return res.json({ error: 'Usuario o contraseña incorrectos' });
+    res.json({ ok: true, user: { username: found.username, role: found.role, discordId: found.discordId || '' } });
+});
+
+app.get('/auth/discord', async (req, res) => {
+    const { discordId } = req.query;
+    if (!discordId) return res.json({ error: 'Falta discordId' });
+    const users = await getServerUsers();
+    const found = users.find(u => u.discordId === discordId);
+    if (!found) return res.json({ error: 'Discord ID no registrada' });
+    res.json({ ok: true, user: { username: found.username, role: found.role, discordId: found.discordId } });
+});
+
 // ── Health check ───────────────────────────────────────────────────────────
 app.get('/', (req,res) => res.json({ status:'online', bot:client.user?.tag||'conectando...' }));
 
@@ -585,6 +678,14 @@ app.post('/ss', auth, async (req,res) => {
         if (files.length > 0) await ch.send({ files });
         await msg.react('✅');
         await msg.react('❌');
+        // Crear hilo automático
+        try {
+            await msg.startThread({
+                name: `SS • ${nick}`,
+                autoArchiveDuration: 1440,
+                reason: `SS Ban de ${nick} por ${staff}`
+            });
+        } catch(te) { console.warn('Thread SS:', te.message); }
         res.json({ ok: true });
     } catch(e) {
         console.error('ss:', e.message);

@@ -155,12 +155,14 @@ function embedSancion(staff, nick, modalidad, tiempo, razon, pruebas) {
         .setAuthor({ name: `Ejecutado por ${staff}`, iconURL: skinUrl(staff) })
         .setTitle('🚫 Nueva Sanción')
         .setThumbnail(skinUrl(nick || staff))
-        .addFields(
-            { name: '👤 Nick',       value: s(nick),            inline: true  },
-            { name: '🎮 Modalidad',  value: s(modalidad),       inline: true  },
-            { name: '⏱️ Tiempo',     value: s(tiempo),          inline: true  },
-            { name: '📋 Razón',      value: s(razon),           inline: false },
-            { name: '🔗 Pruebas',    value: s(pruebas) || '—',  inline: false },
+        .setDescription(
+            `\`\`\`\n` +
+            `Nick: ${s(nick)}\n` +
+            `Razón: ${s(razon)}\n` +
+            `Tiempo: ${s(tiempo)}\n` +
+            `Modalidad: ${s(modalidad)}\n` +
+            `Pruebas: ${s(pruebas) || '—'}\n` +
+            `\`\`\``
         )
         .setTimestamp()
         .setFooter({ text: 'Tilted Staff' });
@@ -188,11 +190,13 @@ function embedRB(staff, modalidad, nick, nick2, razon, tipo) {
         .setAuthor({ name: `Ejecutado por ${staff}`, iconURL: skinUrl(staff) })
         .setTitle(`🔄 Rollback ${tipo==='online' ? '🟢 Online' : '🔴 Offline'}`)
         .setThumbnail(skinUrl(nick || staff))
-        .addFields(
-            { name: '👤 Nick',              value: s(nick),       inline: true  },
-            { name: '👥 Nick involucrado',  value: s(nick2),      inline: true  },
-            { name: '🎮 Modalidad',         value: s(modalidad),  inline: true  },
-            { name: '📋 Razón',             value: s(razon),      inline: false },
+        .setDescription(
+            `\`\`\`\n` +
+            `Nick: ${s(nick)}\n` +
+            `Nick involucrado: ${s(nick2)}\n` +
+            `Modalidad: ${s(modalidad)}\n` +
+            `Razón: ${s(razon)}\n` +
+            `\`\`\``
         )
         .setTimestamp()
         .setFooter({ text: 'Tilted Staff' });

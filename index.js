@@ -209,6 +209,32 @@ async function dmAdmin(msg) {
     } catch(e) { console.error('dmAdmin:', e.message); }
 }
 
+// ── Historial de acciones por staff ───────────────────────────────────────
+const STAFF_HIST_KEY = (staff) => `staffhist:${staff.toLowerCase()}`;
+
+async function saveStaffHistorial(staff, tipo, nick, datos) {
+    const key = STAFF_HIST_KEY(staff);
+    const entry = { tipo, nick, datos, fecha: Date.now() };
+    if (redis) {
+        await redis.lPush(key, JSON.stringify(entry));
+        await redis.lTrim(key, 0, 99);
+    } else {
+        if (!global.staffHist) global.staffHist = {};
+        if (!global.staffHist[key]) global.staffHist[key] = [];
+        global.staffHist[key].unshift(entry);
+        if (global.staffHist[key].length > 100) global.staffHist[key].pop();
+    }
+}
+
+async function getStaffHistorial(staff) {
+    const key = STAFF_HIST_KEY(staff);
+    if (redis) {
+        const raw = await redis.lRange(key, 0, 49);
+        return raw.map(r => { try { return JSON.parse(r); } catch { return null; } }).filter(Boolean);
+    }
+    return (global.staffHist || {})[key] || [];
+}
+
 // ── Historial de sanciones por jugador ────────────────────────────────────
 const HIST_KEY = (nick) => `hist:${nick.toLowerCase()}`;
 
@@ -691,6 +717,7 @@ app.post('/sancion', auth, async (req,res) => {
     const { staff, modalidad, razon, tiempo, nick, pruebas, imagenes } = req.body;
     await addStat(staff, 'sanciones');
     await saveHistorial(nick, 'ban', staff, { modalidad, tiempo, razon, pruebas });
+    await saveStaffHistorial(staff, 'ban', nick, { modalidad, tiempo, razon, pruebas });
     res.json(await send(CHANNEL_SANCIONES, await embedSancion(staff,nick,modalidad,tiempo,razon,pruebas), imagenes));
 });
 
@@ -698,6 +725,7 @@ app.post('/ss', auth, async (req,res) => {
     const { staff, modalidad, razon, nick, pruebas, imagenes, tiempo } = req.body;
     await addStat(staff, 'ss');
     await saveHistorial(nick, 'ss-ban', staff, { modalidad, tiempo, razon, pruebas });
+    await saveStaffHistorial(staff, 'ss-ban', nick, { modalidad, tiempo, razon, pruebas });
     if (!CHANNEL_SS) return res.json({ error: 'Canal no configurado' });
     try {
         const ch = await client.channels.fetch(CHANNEL_SS);
@@ -706,7 +734,6 @@ app.post('/ss', auth, async (req,res) => {
         if (files.length > 0) await ch.send({ files });
         await msg.react('✅');
         await msg.react('❌');
-        // Crear hilo automático
         try {
             await msg.startThread({
                 name: `SS • ${nick}`,
@@ -722,10 +749,30 @@ app.post('/ss', auth, async (req,res) => {
     }
 });
 
+// ── Historial por staff (para panel admin) ─────────────────────────────────
+app.get('/staff-historial', auth, async (req, res) => {
+    const { staff } = req.query;
+    if (!staff) return res.json({ error: 'Falta staff' });
+    const entries = await getStaffHistorial(staff);
+    res.json({ ok: true, entries });
+});
+
+app.get('/staff-historial/all', auth, async (req, res) => {
+    const users = await getServerUsers();
+    const result = await Promise.all(
+        users.map(async u => {
+            const entries = await getStaffHistorial(u.username);
+            return { staff: u.username, entries };
+        })
+    );
+    res.json({ ok: true, data: result });
+});
+
 app.post('/rollback', auth, async (req,res) => {
     const { staff, modalidad, nick, nick2, razon, tipo, imagenes } = req.body;
     await addStat(staff, 'rollbacks');
     await saveHistorial(nick, 'rollback', staff, { modalidad, nick2, razon, tipo });
+    await saveStaffHistorial(staff, 'rollback', nick, { modalidad, nick2, razon, tipo });
     res.json(await send(CHANNEL_ROLLBACKS, await embedRB(staff,modalidad,nick,nick2,razon,tipo), imagenes));
 });
 
@@ -733,6 +780,7 @@ app.post('/mute', auth, async (req,res) => {
     const { staff, modalidad, nick, tiempo, razon, pruebas, imagenes } = req.body;
     await addStat(staff, 'mutes');
     await saveHistorial(nick, 'mute', staff, { modalidad, tiempo, razon, pruebas });
+    await saveStaffHistorial(staff, 'mute', nick, { modalidad, tiempo, razon, pruebas });
     res.json(await send(CHANNEL_MUTES, await embedMute(staff,nick,modalidad,tiempo,razon,pruebas), imagenes));
 });
 

@@ -308,20 +308,23 @@ async function embedSancion(staff, nick, modalidad, tiempo, razon, pruebas) {
         ? { name: `Ejecutado por ${staff}`, iconURL: icon }
         : { name: `Ejecutado por ${staff}` };
     const antecedentes = await getAntecedentes(nick);
-    const embed = new EmbedBuilder()
+    return new EmbedBuilder()
         .setColor(0xFF4444)
         .setAuthor(author)
         .setTitle('🚫 Nueva Sanción')
         .setThumbnail(skinUrl(nick || staff))
-        .addFields(
-            { name: '👤 Nick', value: s(nick), inline: true },
-            { name: '🎮 Modalidad', value: s(modalidad), inline: true },
-            { name: '⏱️ Tiempo', value: s(tiempo), inline: true },
-            { name: '📋 Razón', value: s(razon), inline: false },
-        );
-    if (pruebas) embed.addFields({ name: '🔗 Pruebas', value: s(pruebas), inline: false });
-    if (antecedentes) embed.addFields({ name: '\u200b', value: antecedentes, inline: false });
-    return embed.setTimestamp().setFooter({ text: 'Tilted Staff' });
+        .setDescription(
+            `\`\`\`yaml\n` +
+            `👤 Nick: ${s(nick)}\n` +
+            `📋 Razón: ${s(razon)}\n` +
+            `⏱️ Tiempo: ${s(tiempo)}\n` +
+            `🎮 Modalidad: ${s(modalidad)}\n\n` +
+            `🔗 Pruebas: ${s(pruebas) || '—'}\n` +
+            (antecedentes ? `\n${antecedentes}\n` : '') +
+            `\`\`\``
+        )
+        .setTimestamp()
+        .setFooter({ text: 'Tilted Staff' });
 }
 
 async function embedSS(staff, nick, modalidad, razon, pruebas, tiempo) {
@@ -330,20 +333,23 @@ async function embedSS(staff, nick, modalidad, razon, pruebas, tiempo) {
         ? { name: `Ejecutado por ${staff}`, iconURL: icon }
         : { name: `Ejecutado por ${staff}` };
     const antecedentes = await getAntecedentes(nick);
-    const embed = new EmbedBuilder()
+    return new EmbedBuilder()
         .setColor(0x9B59B6)
         .setAuthor(author)
         .setTitle('🖥️ SS Ban')
         .setThumbnail(skinUrl(nick || staff))
-        .addFields(
-            { name: '👤 Nick', value: s(nick), inline: true },
-            { name: '🎮 Modalidad', value: s(modalidad), inline: true },
-            { name: '⏱️ Tiempo', value: s(tiempo) || 'Permanente', inline: true },
-            { name: '📋 Razón', value: s(razon), inline: false },
-        );
-    if (pruebas) embed.addFields({ name: '🔗 Pruebas', value: s(pruebas), inline: false });
-    if (antecedentes) embed.addFields({ name: '\u200b', value: antecedentes, inline: false });
-    return embed.setTimestamp().setFooter({ text: 'Tilted Staff • SS Ban' });
+        .setDescription(
+            `\`\`\`yaml\n` +
+            `👤 Nick: ${s(nick)}\n` +
+            `🎮 Modalidad: ${s(modalidad)}\n` +
+            `⏱️ Tiempo: ${s(tiempo) || 'Permanente'}\n` +
+            `📋 Razón: ${s(razon)}\n` +
+            `🔗 Pruebas: ${s(pruebas) || '—'}\n` +
+            (antecedentes ? `\n${antecedentes}\n` : '') +
+            `\`\`\``
+        )
+        .setTimestamp()
+        .setFooter({ text: 'Tilted Staff • SS Ban' });
 }
 
 async function embedRB(staff, modalidad, nick, nick2, razon, tipo) {
@@ -356,11 +362,13 @@ async function embedRB(staff, modalidad, nick, nick2, razon, tipo) {
         .setAuthor(author)
         .setTitle(`🔄 Rollback ${tipo==='online' ? '🟢 Online' : '🔴 Offline'}`)
         .setThumbnail(skinUrl(nick || staff))
-        .addFields(
-            { name: '👤 Nick', value: s(nick), inline: true },
-            { name: '👥 Involucrado', value: s(nick2) || '—', inline: true },
-            { name: '🎮 Modalidad', value: s(modalidad), inline: true },
-            { name: '📋 Razón', value: s(razon), inline: false },
+        .setDescription(
+            `\`\`\`yaml\n` +
+            `👤 Nick: ${s(nick)}\n` +
+            `👥 Nick involucrado: ${s(nick2)}\n` +
+            `🎮 Modalidad: ${s(modalidad)}\n\n` +
+            `📋 Razón: ${s(razon)}\n` +
+            `\`\`\``
         )
         .setTimestamp()
         .setFooter({ text: 'Tilted Staff' });
@@ -372,20 +380,23 @@ async function embedMute(staff, nick, modalidad, tiempo, razon, pruebas) {
         ? { name: `Ejecutado por ${staff}`, iconURL: icon }
         : { name: `Ejecutado por ${staff}` };
     const antecedentes = await getAntecedentes(nick);
-    const embed = new EmbedBuilder()
+    return new EmbedBuilder()
         .setColor(0xF39C12)
         .setAuthor(author)
         .setTitle('🔇 Nuevo Mute')
         .setThumbnail(skinUrl(nick || staff))
-        .addFields(
-            { name: '👤 Nick', value: s(nick), inline: true },
-            { name: '🎮 Modalidad', value: s(modalidad), inline: true },
-            { name: '⏱️ Tiempo', value: s(tiempo), inline: true },
-            { name: '📋 Razón', value: s(razon), inline: false },
-        );
-    if (pruebas) embed.addFields({ name: '🔗 Pruebas', value: s(pruebas), inline: false });
-    if (antecedentes) embed.addFields({ name: '\u200b', value: antecedentes, inline: false });
-    return embed.setTimestamp().setFooter({ text: 'Tilted Staff' });
+        .setDescription(
+            `\`\`\`yaml\n` +
+            `👤 Nick: ${s(nick)}\n` +
+            `📋 Razón: ${s(razon)}\n` +
+            `⏱️ Tiempo: ${s(tiempo)}\n` +
+            `🎮 Modalidad: ${s(modalidad)}\n\n` +
+            `🔗 Pruebas: ${s(pruebas) || '—'}\n` +
+            (antecedentes ? `\n${antecedentes}\n` : '') +
+            `\`\`\``
+        )
+        .setTimestamp()
+        .setFooter({ text: 'Tilted Staff' });
 }
 
 // ── Leaderboard ────────────────────────────────────────────────────────────
@@ -540,6 +551,33 @@ client.on('interactionCreate', async interaction => {
             .setFooter({ text: 'Tilted Staff' });
         if (avatarUrl) embed.setThumbnail(avatarUrl);
         await interaction.editReply({ embeds: [embed] });
+    }
+
+    if (cmd === 'create-profile') {
+        await interaction.deferReply({ ephemeral: true });
+        // Verificar que quien ejecuta es admin del panel
+        const callerDiscordId = interaction.user.id;
+        const users = await getServerUsers();
+        const caller = users.find(u => u.discordId === callerDiscordId);
+        if (!caller || caller.role !== 'admin') {
+            return await interaction.editReply('❌ Solo los admins del StaffPanel pueden usar este comando.');
+        }
+        const username   = interaction.options.getString('username');
+        const password   = interaction.options.getString('password');
+        const discordId  = interaction.options.getString('discord_id');
+        const rol        = interaction.options.getString('rol') || 'staff';
+        if (!['staff','admin'].includes(rol)) {
+            return await interaction.editReply('❌ El rol debe ser `staff` o `admin`.');
+        }
+        if (users.find(u => u.username === username)) {
+            return await interaction.editReply(`❌ Ya existe un usuario con el nombre **${username}**.`);
+        }
+        const hashed = await bcrypt.hash(password, SALT_ROUNDS);
+        users.push({ username, password: hashed, role: rol, discordId });
+        await saveServerUsers(users);
+        if (discordId) await setDiscordId(username, discordId);
+        await interaction.editReply(`✅ Perfil creado correctamente.\n\n👤 **Usuario:** ${username}\n🎭 **Rol:** ${rol}\n🔗 **Discord ID:** ${discordId}`);
+        return;
     }
 
     if (cmd === 'sync-staff') {
@@ -958,6 +996,14 @@ async function registerCommands() {
             .setName('vincular')
             .setDescription('Vincula tu usuario del panel con tu Discord')
             .addStringOption(o => o.setName('usuario').setDescription('Tu usuario del StaffPanel').setRequired(true))
+            .toJSON(),
+        new SlashCommandBuilder()
+            .setName('create-profile')
+            .setDescription('Crea un perfil en el StaffPanel (solo admins)')
+            .addStringOption(o => o.setName('username').setDescription('Nombre de usuario').setRequired(true))
+            .addStringOption(o => o.setName('password').setDescription('Contraseña').setRequired(true))
+            .addStringOption(o => o.setName('discord_id').setDescription('Discord ID del staff').setRequired(true))
+            .addStringOption(o => o.setName('rol').setDescription('Rol: staff o admin (por defecto: staff)').setRequired(false))
             .toJSON(),
         new SlashCommandBuilder()
             .setName('sync-staff')

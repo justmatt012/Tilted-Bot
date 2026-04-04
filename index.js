@@ -492,8 +492,9 @@ client.on('interactionCreate', async interaction => {
 app.post('/oauth/callback', async (req, res) => {
     const { code } = req.body;
     if (!code) return res.status(400).json({ error: 'Falta code' });
+    console.log(`[OAuth] Recibido code en ${new Date().toISOString()}`);
     try {
-        // Intercambiar code por token
+        const t1 = Date.now();
         const tokenRes = await fetch('https://discord.com/api/oauth2/token', {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -506,6 +507,7 @@ app.post('/oauth/callback', async (req, res) => {
             })
         });
         const tokenData = await tokenRes.json();
+        console.log(`[OAuth] Token response en ${Date.now()-t1}ms:`, tokenData.error || 'OK');
         if (!tokenData.access_token) return res.status(400).json({ error: 'Token inválido', detail: tokenData });
 
         // Obtener info del usuario
@@ -513,16 +515,6 @@ app.post('/oauth/callback', async (req, res) => {
             headers: { Authorization: `Bearer ${tokenData.access_token}` }
         });
         const user = await userRes.json();
-
-        // Verificar que el usuario esté en el guild
-        let inGuild = false;
-        try {
-            const guild = await client.guilds.fetch(GUILD_ID);
-            const member = await guild.members.fetch(user.id);
-            inGuild = !!member;
-        } catch { inGuild = false; }
-
-        if (!inGuild) return res.status(403).json({ error: 'No sos miembro del servidor de Discord' });
 
         const avatarUrl = user.avatar
             ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png?size=128`

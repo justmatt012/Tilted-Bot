@@ -29,7 +29,10 @@ const CHANNEL_MUTES     = process.env.CHANNEL_MUTES;
 const CLIENT_ID         = process.env.CLIENT_ID;
 const GUILD_ID          = process.env.GUILD_ID;
 const REDIS_URL         = process.env.REDIS_URL;
-const ADMIN_DISCORD_ID  = process.env.ADMIN_DISCORD_ID; // ID de Discord del admin para DMs de error
+const ADMIN_DISCORD_ID  = process.env.ADMIN_DISCORD_ID;
+const DISCORD_CLIENT_ID     = process.env.DISCORD_CLIENT_ID;
+const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET;
+const DISCORD_REDIRECT_URI  = process.env.DISCORD_REDIRECT_URI;
 
 // ── Redis ──────────────────────────────────────────────────────────────────
 let redis = null;
@@ -159,13 +162,18 @@ function skinUrl(nick) {
 
 // Obtiene el avatar de Discord del staff si tiene ID vinculada, sino omite el icon
 async function getAuthorIcon(staffName) {
-    const map = await getDiscordMap();
-    const discordId = map[staffName];
-    if (!discordId) return null;
     try {
-        const user = await client.users.fetch(discordId);
-        return user.displayAvatarURL({ size: 64 });
-    } catch { return null; }
+        const map = await getDiscordMap();
+        const discordId = map[staffName];
+        if (discordId) {
+            const user = await Promise.race([
+                client.users.fetch(discordId),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
+            ]);
+            return user.displayAvatarURL({ size: 64 });
+        }
+    } catch { /* fallback */ }
+    return skinUrl(staffName);
 }
 
 // ── DM al admin en caso de error ───────────────────────────────────────────
@@ -475,6 +483,59 @@ client.on('interactionCreate', async interaction => {
             console.error('sync-staff:', e.message);
             await interaction.editReply(`❌ Error: ${e.message}`);
         }
+    }
+});
+
+// ── Discord OAuth2 callback ────────────────────────────────────────────────
+app.post('/oauth/callback', async (req, res) => {
+    const { code } = req.body;
+    if (!code) return res.status(400).json({ error: 'Falta code' });
+    try {
+        // Intercambiar code por token
+        const tokenRes = await fetch('https://discord.com/api/oauth2/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+                client_id:     DISCORD_CLIENT_ID,
+                client_secret: DISCORD_CLIENT_SECRET,
+                grant_type:    'authorization_code',
+                code,
+                redirect_uri:  DISCORD_REDIRECT_URI,
+            })
+        });
+        const tokenData = await tokenRes.json();
+        if (!tokenData.access_token) return res.status(400).json({ error: 'Token inválido', detail: tokenData });
+
+        // Obtener info del usuario
+        const userRes = await fetch('https://discord.com/api/users/@me', {
+            headers: { Authorization: `Bearer ${tokenData.access_token}` }
+        });
+        const user = await userRes.json();
+
+        // Verificar que el usuario esté en el guild
+        let inGuild = false;
+        try {
+            const guild = await client.guilds.fetch(GUILD_ID);
+            const member = await guild.members.fetch(user.id);
+            inGuild = !!member;
+        } catch { inGuild = false; }
+
+        if (!inGuild) return res.status(403).json({ error: 'No sos miembro del servidor de Discord' });
+
+        const avatarUrl = user.avatar
+            ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png?size=128`
+            : `https://cdn.discordapp.com/embed/avatars/${parseInt(user.discriminator || 0) % 5}.png`;
+
+        res.json({
+            ok: true,
+            discordId:   user.id,
+            username:    user.username,
+            displayName: user.global_name || user.username,
+            avatar:      avatarUrl,
+        });
+    } catch(e) {
+        console.error('oauth/callback:', e.message);
+        res.status(500).json({ error: e.message });
     }
 });
 

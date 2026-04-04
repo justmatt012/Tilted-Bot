@@ -48,20 +48,23 @@ async function connectRedis() {
 
 // ── Users en servidor ─────────────────────────────────────────────────────
 const USERS_KEY = 'sp:users';
-// Hash del password por defecto 'admin123'
-const DEFAULT_ADMIN_HASH = '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi'; // admin123
 
 async function getServerUsers() {
     if (redis) {
         const raw = await redis.get(USERS_KEY);
         if (raw) return JSON.parse(raw);
+        // Primera vez — crear admin con hash real
+        const hash = await bcrypt.hash('admin123', SALT_ROUNDS);
+        const defaults = [{ username: 'admin', password: hash, role: 'admin', discordId: '' }];
+        await redis.set(USERS_KEY, JSON.stringify(defaults));
+        return defaults;
     } else {
-        if (!global.spUsers) global.spUsers = [
-            { username: 'admin', password: DEFAULT_ADMIN_HASH, role: 'admin', discordId: '' }
-        ];
+        if (!global.spUsers) {
+            const hash = await bcrypt.hash('admin123', SALT_ROUNDS);
+            global.spUsers = [{ username: 'admin', password: hash, role: 'admin', discordId: '' }];
+        }
         return global.spUsers;
     }
-    return [{ username: 'admin', password: DEFAULT_ADMIN_HASH, role: 'admin', discordId: '' }];
 }
 
 async function saveServerUsers(users) {

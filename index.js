@@ -425,7 +425,17 @@ client.on('interactionCreate', async interaction => {
 
     if (cmd === 'staff-info') {
         await interaction.deferReply();
-        const usuario = interaction.options.getString('usuario');
+        let usuario = interaction.options.getString('usuario');
+
+        // Si pasaron un Discord ID o mención, resolver al username del panel
+        const cleanId = usuario.replace(/[<@!>]/g, '');
+        if (/^\d+$/.test(cleanId)) {
+            // Es un Discord ID — buscar el username en el mapa inverso
+            const map = await getDiscordMap();
+            const found = Object.entries(map).find(([, id]) => id === cleanId);
+            if (found) usuario = found[0];
+        }
+
         const weekData  = await getLB('normal', 'week');
         const monthData = await getLB('normal', 'month');
         const ssWeek    = await getLB('ss', 'week');
@@ -435,10 +445,11 @@ client.on('interactionCreate', async interaction => {
         const ws = ssWeek[usuario]    || {};
         const ms = ssMonth[usuario]   || {};
         const mention = await resolveMention(usuario);
+
         const embed = new EmbedBuilder()
             .setColor(0xF39C12)
             .setTitle(`📊 Stats de ${usuario}`)
-            .setDescription(`${mention}`)
+            .setDescription(mention)
             .addFields(
                 { name: '📅 Esta semana', value:
                     `🚫 \`${wn.sanciones||0}\` bans  •  🔄 \`${wn.rollbacks||0}\` rbs  •  🔇 \`${wn.mutes||0}\` mutes\n` +

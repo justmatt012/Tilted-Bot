@@ -453,6 +453,8 @@ client.on('interactionCreate', async interaction => {
             .setFooter({ text: 'Tilted Staff' });
         await interaction.editReply({ embeds: [embed] });
     }
+
+    if (cmd === 'sync-staff') {
         await interaction.deferReply({ ephemeral: true });
         try {
             const guild = await client.guilds.fetch(GUILD_ID);

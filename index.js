@@ -642,6 +642,34 @@ app.get('/auth/discord', async (req, res) => {
     res.json({ ok: true, user: { username: found.username, role: found.role, discordId: found.discordId } });
 });
 
+// ── Top JSON endpoint para el panel ───────────────────────────────────────
+app.get('/top', async (req, res) => {
+    const cat     = req.query.cat    || 'normal';
+    const periodo = req.query.periodo || 'week';
+    const data    = await getLB(cat, periodo);
+    const entries = Object.entries(data).sort((a,b) =>
+        Object.values(b[1]).reduce((s,v)=>s+v,0) -
+        Object.values(a[1]).reduce((s,v)=>s+v,0)
+    );
+    const map = await getDiscordMap();
+    const result = await Promise.all(entries.slice(0,10).map(async ([staff, stats]) => {
+        const discordId = map[staff];
+        let avatar = null;
+        if (discordId) {
+            try {
+                const user = await Promise.race([
+                    client.users.fetch(discordId),
+                    new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 2000))
+                ]);
+                avatar = user.displayAvatarURL({ size: 64 });
+            } catch {}
+        }
+        const total = Object.values(stats).reduce((s,v)=>s+v,0);
+        return { staff, stats, total, avatar, discordId };
+    }));
+    res.json({ ok: true, data: result, cat, periodo });
+});
+
 // ── Health check ───────────────────────────────────────────────────────────
 app.get('/', (req,res) => res.json({ status:'online', bot:client.user?.tag||'conectando...' }));
 

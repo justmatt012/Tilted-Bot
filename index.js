@@ -290,7 +290,16 @@ app.post('/sancion', auth, async (req,res) => {
 app.post('/ss', auth, async (req,res) => {
     const { staff, modalidad, razon, nick, pruebas, imagenes } = req.body;
     await addStat(staff, 'ss');
-    res.json(await send(CHANNEL_SS, embedSS(staff,nick,modalidad,razon,pruebas), imagenes));
+    if (!CHANNEL_SS) return res.json({ error: 'Canal no configurado' });
+    try {
+        const ch = await client.channels.fetch(CHANNEL_SS);
+        const msg = await ch.send({ embeds: [embedSS(staff,nick,modalidad,razon,pruebas)] });
+        const files = (imagenes||[]).map((b,i)=>toAttachment(b,i)).filter(Boolean);
+        if (files.length > 0) await ch.send({ files });
+        await msg.react('✅');
+        await msg.react('❌');
+        res.json({ ok: true });
+    } catch(e) { console.error('ss:', e.message); res.json({ error: e.message }); }
 });
 
 app.post('/rollback', auth, async (req,res) => {

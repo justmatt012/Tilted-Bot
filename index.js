@@ -63,8 +63,8 @@ function ttlMonth() {
 // ── Stats ──────────────────────────────────────────────────────────────────
 async function addStat(staff, tipo) {
     if (!staff || !tipo) return;
-    const isSSExtra = ['ss-appeal','ss-clean','ss-notes'].includes(tipo);
-    const cat   = isSSExtra ? 'ss' : 'normal';
+    const isSSCat = ['ss','ss-appeal','ss-clean','ss-notes'].includes(tipo);
+    const cat   = isSSCat ? 'ss' : 'normal';
     const field = `${staff}:${tipo}`;
     if (redis) {
         await redis.hIncrBy(getWeekKey(cat),  field, 1); await redis.expire(getWeekKey(cat),  ttlWeek());
@@ -111,12 +111,33 @@ function toAttachment(b64, i) {
     } catch(e) { return null; }
 }
 
-// ── Resolver mention automáticamente buscando en el guild ─────────────────
-//    Busca por username, displayName o nickname. No requiere registro previo.
+// ── Discord ID map — staffUsername → discordId ─────────────────────────────
+const DISCORD_MAP_KEY = 'discord:map';
+
+async function getDiscordMap() {
+    if (redis) {
+        const raw = await redis.hGetAll(DISCORD_MAP_KEY) || {};
+        return raw;
+    }
+    return global.discordMap || {};
+}
+
+async function setDiscordId(staff, discordId) {
+    if (redis) {
+        await redis.hSet(DISCORD_MAP_KEY, staff, discordId);
+    } else {
+        if (!global.discordMap) global.discordMap = {};
+        global.discordMap[staff] = discordId;
+    }
+}
+
 async function resolveMention(staffNick) {
+    // Primero busca en el mapa de IDs guardados
+    const map = await getDiscordMap();
+    if (map[staffNick]) return `<@${map[staffNick]}>`;
+    // Fallback: busca por nombre en el guild
     try {
         const guild = await client.guilds.fetch(GUILD_ID);
-        // Traer todos los miembros (requiere GuildMembers intent + privileged en portal)
         const members = await guild.members.fetch();
         const lower = staffNick.toLowerCase();
         const found = members.find(m =>
@@ -168,7 +189,7 @@ function embedSancion(staff, nick, modalidad, tiempo, razon, pruebas) {
         .setFooter({ text: 'Tilted Staff' });
 }
 
-function embedSS(staff, nick, modalidad, razon, pruebas) {
+function embedSS(staff, nick, modalidad, razon, pruebas, tiempo) {
     return new EmbedBuilder()
         .setColor(0x9B59B6)
         .setAuthor({ name: `Ejecutado por ${staff}`, iconURL: skinUrl(staff) })
@@ -177,8 +198,9 @@ function embedSS(staff, nick, modalidad, razon, pruebas) {
         .setDescription(
             `\`\`\`yaml\n` +
             `👤 Nick: ${s(nick)}\n` +
-            `🎮 Modalidad: ${s(modalidad)}\n\n` +
-            `📋 Razón: ${s(razon)}\n\n` +
+            `🎮 Modalidad: ${s(modalidad)}\n` +
+            `⏱️ Tiempo: ${s(tiempo) || 'Permanente'}\n` +
+            `📋 Razón: ${s(razon)}\n` +
             `🔗 Pruebas: ${s(pruebas) || '—'}\n` +
             `\`\`\``
         )
@@ -227,14 +249,15 @@ function embedMute(staff, nick, modalidad, tiempo, razon, pruebas) {
 async function buildLBEmbed(data, cat, periodo) {
     const label    = periodo==='week' ? 'Semanal' : 'Mensual';
     const reset    = periodo==='week' ? 'Resetea cada domingo' : 'Resetea cada fin de mes';
-    const catLabel = cat==='ss' ? '🖥️ SS Staff' : '⚔️ Staff';
+    const catLabel = cat==='ss' ? 'SS Staff' : 'Staff';
+    const color    = cat==='ss' ? 0x9B59B6 : (periodo==='week' ? 0xF39C12 : 0x5865F2);
     const entries  = Object.entries(data);
 
     if (!entries.length) return new EmbedBuilder()
-        .setColor(0xF39C12)
-        .setTitle(`🏆 ${catLabel} — Ranking ${label}`)
-        .setDescription('No hay acciones aún.')
-        .setFooter({ text: reset });
+        .setColor(color)
+        .setTitle(`🏆 Ranking ${catLabel} — ${label}`)
+        .setDescription('```\nNo hay acciones registradas aún.\n```')
+        .setFooter({ text: `Tilted Staff  •  ${reset}` });
 
     entries.sort((a,b) =>
         Object.values(b[1]).reduce((s,v)=>s+v,0) -
@@ -242,24 +265,35 @@ async function buildLBEmbed(data, cat, periodo) {
     );
 
     const medals = ['🥇','🥈','🥉'];
-
-    // Resolver mentions en paralelo
     const mentions = await Promise.all(entries.map(([staff]) => resolveMention(staff)));
 
     const lines = entries.map(([staff, stats], i) => {
-        const total   = Object.values(stats).reduce((s,v)=>s+v,0);
-        const medal   = medals[i] || `\`#${String(i+1).padStart(2,'0')}\``;
+        const total  = Object.values(stats).reduce((s,v)=>s+v,0);
+        const medal  = medals[i] || `**#${i+1}**`;
         const mention = mentions[i];
+
         if (cat==='ss') {
-            const ban=stats['ss']||0, appeal=stats['ss-appeal']||0, clean=stats['ss-clean']||0, notes=stats['ss-notes']||0;
-            return `${medal} ${mention} — **${total}** acciones\n> 🚫 \`${ban}\` ban  •  📨 \`${appeal}\` appeal  •  ✅ \`${clean}\` clean  •  📝 \`${notes}\` notes`;
+            const ban    = stats['ss']       || 0;
+            const appeal = stats['ss-appeal']|| 0;
+            const clean  = stats['ss-clean'] || 0;
+            const notes  = stats['ss-notes'] || 0;
+            return (
+                `${medal} ${mention} — **${total}** acciones\n` +
+                `> 🚫 \`${ban}\` ban  •  📨 \`${appeal}\` appeal  •  ✅ \`${clean}\` clean  •  📝 \`${notes}\` notes`
+            );
         }
-        return `${medal} ${mention} — **${total}** acciones\n> 🚫 \`${stats.sanciones||0}\` bans  •  🔄 \`${stats.rollbacks||0}\` rollbacks  •  🔇 \`${stats.mutes||0}\` mutes`;
+        const bans  = stats.sanciones  || 0;
+        const rbs   = stats.rollbacks  || 0;
+        const mutes = stats.mutes      || 0;
+        return (
+            `${medal} ${mention} — **${total}** acciones\n` +
+            `> 🚫 \`${bans}\` bans  •  🔄 \`${rbs}\` rollbacks  •  🔇 \`${mutes}\` mutes`
+        );
     }).join('\n\n');
 
     return new EmbedBuilder()
-        .setColor(cat==='ss' ? 0x9B59B6 : (periodo==='week' ? 0xF39C12 : 0x7289DA))
-        .setTitle(`🏆 ${catLabel} — Ranking ${label}`)
+        .setColor(color)
+        .setTitle(`🏆 Ranking ${catLabel} — ${label}`)
         .setDescription(lines)
         .setTimestamp()
         .setFooter({ text: `Tilted Staff  •  ${reset}` });
@@ -269,16 +303,73 @@ async function buildLBEmbed(data, cat, periodo) {
 client.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
     const cmd = interaction.commandName;
+
     if (['top-semanal','top-mensual','top-ss-semanal','top-ss-mensual'].includes(cmd)) {
         const periodo = cmd.includes('semanal') ? 'week' : 'month';
         const cat     = cmd.includes('ss') ? 'ss' : 'normal';
         const data    = await getLB(cat, periodo);
         await interaction.reply({ embeds: [await buildLBEmbed(data, cat, periodo)] });
     }
+
+    if (cmd === 'vincular') {
+        const usuario = interaction.options.getString('usuario');
+        const discordId = interaction.user.id;
+        await setDiscordId(usuario, discordId);
+        await interaction.reply({
+            content: `✅ Tu usuario **${usuario}** fue vinculado a ${interaction.user}. Aparecerás mencionado en el top.`,
+            ephemeral: true
+        });
+    }
+
+    if (cmd === 'sync-staff') {
+        await interaction.deferReply({ ephemeral: true });
+        try {
+            const guild = await client.guilds.fetch(GUILD_ID);
+            const members = await guild.members.fetch();
+            const map = await getDiscordMap();
+            let linked = 0;
+
+            for (const [, member] of members) {
+                const lower   = member.user.username.toLowerCase();
+                const display = member.displayName.toLowerCase();
+                const nick    = (member.nickname || '').toLowerCase();
+
+                // Buscar si algún staff del mapa coincide con este miembro
+                for (const staffName of Object.keys(map)) {
+                    const sl = staffName.toLowerCase();
+                    if (sl === lower || sl === display || sl === nick) {
+                        const currentId = map[staffName];
+                        if (currentId !== member.user.id) {
+                            await setDiscordId(staffName, member.user.id);
+                            linked++;
+                        }
+                    }
+                }
+            }
+
+            await interaction.editReply(`✅ Sync completo. **${linked}** staff vinculados automáticamente.`);
+        } catch(e) {
+            console.error('sync-staff:', e.message);
+            await interaction.editReply(`❌ Error: ${e.message}`);
+        }
+    }
 });
 
 // ── Health check ───────────────────────────────────────────────────────────
 app.get('/', (req,res) => res.json({ status:'online', bot:client.user?.tag||'conectando...' }));
+
+// ── Link Discord ID ────────────────────────────────────────────────────────
+app.post('/link-discord', auth, async (req,res) => {
+    const { staff, discordId } = req.body;
+    if (!staff || !discordId) return res.json({ error: 'Faltan datos' });
+    await setDiscordId(staff, discordId);
+    res.json({ ok: true, message: `${staff} vinculado a <@${discordId}>` });
+});
+
+app.get('/discord-map', auth, async (req,res) => {
+    const map = await getDiscordMap();
+    res.json(map);
+});
 
 // ── Endpoints ──────────────────────────────────────────────────────────────
 app.post('/sancion', auth, async (req,res) => {
@@ -288,12 +379,12 @@ app.post('/sancion', auth, async (req,res) => {
 });
 
 app.post('/ss', auth, async (req,res) => {
-    const { staff, modalidad, razon, nick, pruebas, imagenes } = req.body;
+    const { staff, modalidad, razon, nick, pruebas, imagenes, tiempo } = req.body;
     await addStat(staff, 'ss');
     if (!CHANNEL_SS) return res.json({ error: 'Canal no configurado' });
     try {
         const ch = await client.channels.fetch(CHANNEL_SS);
-        const msg = await ch.send({ embeds: [embedSS(staff,nick,modalidad,razon,pruebas)] });
+        const msg = await ch.send({ embeds: [embedSS(staff,nick,modalidad,razon,pruebas,tiempo)] });
         const files = (imagenes||[]).map((b,i)=>toAttachment(b,i)).filter(Boolean);
         if (files.length > 0) await ch.send({ files });
         await msg.react('✅');
@@ -383,6 +474,64 @@ app.post('/ss-notes', auth, async (req,res) => {
     res.json(await send(CHANNEL_SS, embed, imagenes));
 });
 
+// ── Vincular staff username → Discord ID ──────────────────────────────────
+app.post('/vincular', auth, async (req,res) => {
+    const { staff, discordId } = req.body;
+    if (!staff || !discordId) return res.json({ error: 'Faltan datos' });
+    await setDiscordId(staff, discordId);
+    res.json({ ok: true, message: `${staff} vinculado a <@${discordId}>` });
+});
+
+app.get('/vincular', auth, async (req,res) => {
+    const map = await getDiscordMap();
+    res.json({ ok: true, map });
+});
+
+app.delete('/vincular', auth, async (req,res) => {
+    const { staff } = req.body;
+    if (!staff) return res.json({ error: 'Falta staff' });
+    if (redis) { await redis.hDel(DISCORD_MAP_KEY, staff); }
+    else { if (global.discordMap) delete global.discordMap[staff]; }
+    res.json({ ok: true });
+});
+
+// ── Auto-vincular al entrar al servidor ───────────────────────────────────
+async function tryAutoLink(member) {
+    try {
+        const map = await getDiscordMap();
+        const lower = member.user.username.toLowerCase();
+        const display = member.displayName.toLowerCase();
+        const nick = (member.nickname || '').toLowerCase();
+
+        // Buscar en el mapa si ya está vinculado
+        const alreadyLinked = Object.values(map).includes(member.user.id);
+        if (alreadyLinked) return;
+
+        // Buscar coincidencia con algún staff registrado en el panel
+        // El panel guarda usuarios en localStorage del cliente, pero el bot
+        // puede intentar matchear por username/displayName/nickname
+        const staffNames = Object.keys(map);
+        // Si no hay staff en el mapa, no hay nada con qué comparar aún
+        // El match se hace cuando algún staff ya fue registrado manualmente
+        // y un nuevo miembro entra con el mismo nombre
+        for (const staffName of staffNames) {
+            if (
+                staffName.toLowerCase() === lower ||
+                staffName.toLowerCase() === display ||
+                staffName.toLowerCase() === nick
+            ) {
+                await setDiscordId(staffName, member.user.id);
+                console.log(`Auto-vinculado: ${staffName} → ${member.user.id}`);
+                return;
+            }
+        }
+    } catch(e) { console.error('tryAutoLink:', e.message); }
+}
+
+client.on('guildMemberAdd', async member => {
+    await tryAutoLink(member);
+});
+
 // ── Registrar slash commands ───────────────────────────────────────────────
 async function registerCommands() {
     if (!CLIENT_ID || !GUILD_ID) { console.log('Sin CLIENT_ID/GUILD_ID'); return; }
@@ -391,11 +540,20 @@ async function registerCommands() {
         new SlashCommandBuilder().setName('top-mensual').setDescription('Ranking mensual del staff (sanciones, rollbacks, mutes)').toJSON(),
         new SlashCommandBuilder().setName('top-ss-semanal').setDescription('Ranking semanal de SS (bans, appeals, cleans, notes)').toJSON(),
         new SlashCommandBuilder().setName('top-ss-mensual').setDescription('Ranking mensual de SS (bans, appeals, cleans, notes)').toJSON(),
+        new SlashCommandBuilder()
+            .setName('vincular')
+            .setDescription('Vincula tu usuario del panel con tu Discord')
+            .addStringOption(o => o.setName('usuario').setDescription('Tu usuario del StaffPanel').setRequired(true))
+            .toJSON(),
+        new SlashCommandBuilder()
+            .setName('sync-staff')
+            .setDescription('Sincroniza todos los miembros del servidor con el mapa de Discord IDs (usar 1 vez)')
+            .toJSON(),
     ];
     const rest = new REST({ version:'10' }).setToken(BOT_TOKEN);
     try {
         await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
-        console.log('4 slash commands registrados');
+        console.log('Slash commands registrados');
     } catch(e) { console.error('Commands:', e.message); }
 }
 

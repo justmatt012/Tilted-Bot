@@ -7,6 +7,8 @@ const {
 const { createClient } = require('redis');
 const express = require('express');
 const cors    = require('cors');
+const bcrypt  = require('bcrypt');
+const SALT_ROUNDS = 10;
 
 const client = new Client({
     intents: [
@@ -46,6 +48,8 @@ async function connectRedis() {
 
 // ── Users en servidor ─────────────────────────────────────────────────────
 const USERS_KEY = 'sp:users';
+// Hash del password por defecto 'admin123'
+const DEFAULT_ADMIN_HASH = '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi'; // admin123
 
 async function getServerUsers() {
     if (redis) {
@@ -53,11 +57,11 @@ async function getServerUsers() {
         if (raw) return JSON.parse(raw);
     } else {
         if (!global.spUsers) global.spUsers = [
-            { username: 'admin', password: 'admin123', role: 'admin', discordId: '' }
+            { username: 'admin', password: DEFAULT_ADMIN_HASH, role: 'admin', discordId: '' }
         ];
         return global.spUsers;
     }
-    return [{ username: 'admin', password: 'admin123', role: 'admin', discordId: '' }];
+    return [{ username: 'admin', password: DEFAULT_ADMIN_HASH, role: 'admin', discordId: '' }];
 }
 
 async function saveServerUsers(users) {
@@ -281,27 +285,40 @@ async function send(channelId, embed, imagenes) {
 
 // ── Embed builders ────────────────────────────────────────────────────────
 
+// ── Chequeo de antecedentes ────────────────────────────────────────────────
+async function getAntecedentes(nick) {
+    if (!nick) return null;
+    const hist = await getHistorial(nick);
+    const bans = hist.filter(e => e.tipo === 'ban' || e.tipo === 'ss-ban');
+    if (!bans.length) return null;
+    const total = bans.length;
+    const ultimo = bans[0];
+    const fecha = new Date(ultimo.fecha).toLocaleDateString('es-ES', { day:'2-digit', month:'2-digit', year:'numeric' });
+    return total === 1
+        ? `⚠️ 1 baneo previo (${fecha})`
+        : `🔴 ${total} baneos previos — último el ${fecha}`;
+}
+
 async function embedSancion(staff, nick, modalidad, tiempo, razon, pruebas) {
     const icon = await getAuthorIcon(staff);
     const author = icon
         ? { name: `Ejecutado por ${staff}`, iconURL: icon }
         : { name: `Ejecutado por ${staff}` };
-    return new EmbedBuilder()
+    const antecedentes = await getAntecedentes(nick);
+    const embed = new EmbedBuilder()
         .setColor(0xFF4444)
         .setAuthor(author)
         .setTitle('🚫 Nueva Sanción')
         .setThumbnail(skinUrl(nick || staff))
-        .setDescription(
-            `\`\`\`yaml\n` +
-            `👤 Nick: ${s(nick)}\n` +
-            `📋 Razón: ${s(razon)}\n` +
-            `⏱️ Tiempo: ${s(tiempo)}\n` +
-            `🎮 Modalidad: ${s(modalidad)}\n\n` +
-            `🔗 Pruebas: ${s(pruebas) || '—'}\n` +
-            `\`\`\``
-        )
-        .setTimestamp()
-        .setFooter({ text: 'Tilted Staff' });
+        .addFields(
+            { name: '👤 Nick', value: s(nick), inline: true },
+            { name: '🎮 Modalidad', value: s(modalidad), inline: true },
+            { name: '⏱️ Tiempo', value: s(tiempo), inline: true },
+            { name: '📋 Razón', value: s(razon), inline: false },
+        );
+    if (pruebas) embed.addFields({ name: '🔗 Pruebas', value: s(pruebas), inline: false });
+    if (antecedentes) embed.addFields({ name: '\u200b', value: antecedentes, inline: false });
+    return embed.setTimestamp().setFooter({ text: 'Tilted Staff' });
 }
 
 async function embedSS(staff, nick, modalidad, razon, pruebas, tiempo) {
@@ -309,22 +326,21 @@ async function embedSS(staff, nick, modalidad, razon, pruebas, tiempo) {
     const author = icon
         ? { name: `Ejecutado por ${staff}`, iconURL: icon }
         : { name: `Ejecutado por ${staff}` };
-    return new EmbedBuilder()
+    const antecedentes = await getAntecedentes(nick);
+    const embed = new EmbedBuilder()
         .setColor(0x9B59B6)
         .setAuthor(author)
         .setTitle('🖥️ SS Ban')
         .setThumbnail(skinUrl(nick || staff))
-        .setDescription(
-            `\`\`\`yaml\n` +
-            `👤 Nick: ${s(nick)}\n` +
-            `🎮 Modalidad: ${s(modalidad)}\n` +
-            `⏱️ Tiempo: ${s(tiempo) || 'Permanente'}\n` +
-            `📋 Razón: ${s(razon)}\n` +
-            `🔗 Pruebas: ${s(pruebas) || '—'}\n` +
-            `\`\`\``
-        )
-        .setTimestamp()
-        .setFooter({ text: 'Tilted Staff • SS Ban' });
+        .addFields(
+            { name: '👤 Nick', value: s(nick), inline: true },
+            { name: '🎮 Modalidad', value: s(modalidad), inline: true },
+            { name: '⏱️ Tiempo', value: s(tiempo) || 'Permanente', inline: true },
+            { name: '📋 Razón', value: s(razon), inline: false },
+        );
+    if (pruebas) embed.addFields({ name: '🔗 Pruebas', value: s(pruebas), inline: false });
+    if (antecedentes) embed.addFields({ name: '\u200b', value: antecedentes, inline: false });
+    return embed.setTimestamp().setFooter({ text: 'Tilted Staff • SS Ban' });
 }
 
 async function embedRB(staff, modalidad, nick, nick2, razon, tipo) {
@@ -337,13 +353,11 @@ async function embedRB(staff, modalidad, nick, nick2, razon, tipo) {
         .setAuthor(author)
         .setTitle(`🔄 Rollback ${tipo==='online' ? '🟢 Online' : '🔴 Offline'}`)
         .setThumbnail(skinUrl(nick || staff))
-        .setDescription(
-            `\`\`\`yaml\n` +
-            `👤 Nick: ${s(nick)}\n` +
-            `👥 Nick involucrado: ${s(nick2)}\n` +
-            `🎮 Modalidad: ${s(modalidad)}\n\n` +
-            `📋 Razón: ${s(razon)}\n` +
-            `\`\`\``
+        .addFields(
+            { name: '👤 Nick', value: s(nick), inline: true },
+            { name: '👥 Involucrado', value: s(nick2) || '—', inline: true },
+            { name: '🎮 Modalidad', value: s(modalidad), inline: true },
+            { name: '📋 Razón', value: s(razon), inline: false },
         )
         .setTimestamp()
         .setFooter({ text: 'Tilted Staff' });
@@ -354,22 +368,21 @@ async function embedMute(staff, nick, modalidad, tiempo, razon, pruebas) {
     const author = icon
         ? { name: `Ejecutado por ${staff}`, iconURL: icon }
         : { name: `Ejecutado por ${staff}` };
-    return new EmbedBuilder()
+    const antecedentes = await getAntecedentes(nick);
+    const embed = new EmbedBuilder()
         .setColor(0xF39C12)
         .setAuthor(author)
         .setTitle('🔇 Nuevo Mute')
         .setThumbnail(skinUrl(nick || staff))
-        .setDescription(
-            `\`\`\`yaml\n` +
-            `👤 Nick: ${s(nick)}\n` +
-            `📋 Razón: ${s(razon)}\n` +
-            `⏱️ Tiempo: ${s(tiempo)}\n` +
-            `🎮 Modalidad: ${s(modalidad)}\n\n` +
-            `🔗 Pruebas: ${s(pruebas) || '—'}\n` +
-            `\`\`\``
-        )
-        .setTimestamp()
-        .setFooter({ text: 'Tilted Staff' });
+        .addFields(
+            { name: '👤 Nick', value: s(nick), inline: true },
+            { name: '🎮 Modalidad', value: s(modalidad), inline: true },
+            { name: '⏱️ Tiempo', value: s(tiempo), inline: true },
+            { name: '📋 Razón', value: s(razon), inline: false },
+        );
+    if (pruebas) embed.addFields({ name: '🔗 Pruebas', value: s(pruebas), inline: false });
+    if (antecedentes) embed.addFields({ name: '\u200b', value: antecedentes, inline: false });
+    return embed.setTimestamp().setFooter({ text: 'Tilted Staff' });
 }
 
 // ── Leaderboard ────────────────────────────────────────────────────────────
@@ -622,7 +635,8 @@ app.post('/users', auth, async (req, res) => {
     if (!username || !password) return res.json({ error: 'Faltan datos' });
     const users = await getServerUsers();
     if (users.find(u => u.username === username)) return res.json({ error: 'Usuario ya existe' });
-    users.push({ username, password, role: role || 'staff', discordId: discordId || '' });
+    const hashed = await bcrypt.hash(password, SALT_ROUNDS);
+    users.push({ username, password: hashed, role: role || 'staff', discordId: discordId || '' });
     await saveServerUsers(users);
     if (discordId) await setDiscordId(username, discordId);
     res.json({ ok: true });
@@ -654,8 +668,10 @@ app.post('/auth/login', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.json({ error: 'Faltan datos' });
     const users = await getServerUsers();
-    const found = users.find(u => u.username === username && u.password === password);
+    const found = users.find(u => u.username === username);
     if (!found) return res.json({ error: 'Usuario o contraseña incorrectos' });
+    const match = await bcrypt.compare(password, found.password).catch(() => false);
+    if (!match) return res.json({ error: 'Usuario o contraseña incorrectos' });
     res.json({ ok: true, user: { username: found.username, role: found.role, discordId: found.discordId || '' } });
 });
 
@@ -666,6 +682,19 @@ app.get('/auth/discord', async (req, res) => {
     const found = users.find(u => u.discordId === discordId);
     if (!found) return res.json({ error: 'Discord ID no registrada' });
     res.json({ ok: true, user: { username: found.username, role: found.role, discordId: found.discordId } });
+});
+
+app.post('/users/change-password', auth, async (req, res) => {
+    const { username, oldPassword, newPassword } = req.body;
+    if (!username || !oldPassword || !newPassword) return res.json({ error: 'Faltan datos' });
+    const users = await getServerUsers();
+    const u = users.find(u => u.username === username);
+    if (!u) return res.json({ error: 'Usuario no encontrado' });
+    const match = await bcrypt.compare(oldPassword, u.password).catch(() => false);
+    if (!match) return res.json({ error: 'Contraseña actual incorrecta' });
+    u.password = await bcrypt.hash(newPassword, SALT_ROUNDS);
+    await saveServerUsers(users);
+    res.json({ ok: true });
 });
 
 // ── Top JSON endpoint para el panel ───────────────────────────────────────
@@ -734,13 +763,6 @@ app.post('/ss', auth, async (req,res) => {
         if (files.length > 0) await ch.send({ files });
         await msg.react('✅');
         await msg.react('❌');
-        try {
-            await msg.startThread({
-                name: `SS • ${nick}`,
-                autoArchiveDuration: 1440,
-                reason: `SS Ban de ${nick} por ${staff}`
-            });
-        } catch(te) { console.warn('Thread SS:', te.message); }
         res.json({ ok: true });
     } catch(e) {
         console.error('ss:', e.message);

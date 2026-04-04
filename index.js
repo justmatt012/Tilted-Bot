@@ -29,6 +29,7 @@ const CHANNEL_MUTES     = process.env.CHANNEL_MUTES;
 const CLIENT_ID         = process.env.CLIENT_ID;
 const GUILD_ID          = process.env.GUILD_ID;
 const REDIS_URL         = process.env.REDIS_URL;
+const ADMIN_DISCORD_ID  = process.env.ADMIN_DISCORD_ID; // ID de Discord del admin para DMs de error
 
 // ── Redis ──────────────────────────────────────────────────────────────────
 let redis = null;
@@ -156,6 +157,52 @@ function skinUrl(nick) {
     return `https://mc-heads.net/avatar/${encodeURIComponent(nick)}/128`;
 }
 
+// Obtiene el avatar de Discord del staff si tiene ID vinculada, sino omite el icon
+async function getAuthorIcon(staffName) {
+    const map = await getDiscordMap();
+    const discordId = map[staffName];
+    if (!discordId) return null;
+    try {
+        const user = await client.users.fetch(discordId);
+        return user.displayAvatarURL({ size: 64 });
+    } catch { return null; }
+}
+
+// ── DM al admin en caso de error ───────────────────────────────────────────
+async function dmAdmin(msg) {
+    if (!ADMIN_DISCORD_ID) return;
+    try {
+        const user = await client.users.fetch(ADMIN_DISCORD_ID);
+        await user.send(`⚠️ **Error en StaffPanel:**\n\`\`\`\n${msg}\n\`\`\``);
+    } catch(e) { console.error('dmAdmin:', e.message); }
+}
+
+// ── Historial de sanciones por jugador ────────────────────────────────────
+const HIST_KEY = (nick) => `hist:${nick.toLowerCase()}`;
+
+async function saveHistorial(nick, tipo, staff, datos) {
+    const key = HIST_KEY(nick);
+    const entry = { tipo, staff, datos, fecha: Date.now() };
+    if (redis) {
+        await redis.lPush(key, JSON.stringify(entry));
+        await redis.lTrim(key, 0, 49); // máximo 50 entradas por jugador
+    } else {
+        if (!global.historial) global.historial = {};
+        if (!global.historial[key]) global.historial[key] = [];
+        global.historial[key].unshift(entry);
+        if (global.historial[key].length > 50) global.historial[key].pop();
+    }
+}
+
+async function getHistorial(nick) {
+    const key = HIST_KEY(nick);
+    if (redis) {
+        const raw = await redis.lRange(key, 0, 49);
+        return raw.map(r => { try { return JSON.parse(r); } catch { return null; } }).filter(Boolean);
+    }
+    return (global.historial || {})[key] || [];
+}
+
 // ── Enviar embed + imágenes ────────────────────────────────────────────────
 async function send(channelId, embed, imagenes) {
     if (!channelId) return { error: 'Canal no configurado' };
@@ -165,15 +212,25 @@ async function send(channelId, embed, imagenes) {
         const files = (imagenes||[]).map((b,i)=>toAttachment(b,i)).filter(Boolean);
         if (files.length > 0) await ch.send({ files });
         return { ok: true };
-    } catch(e) { console.error('send:', e.message); return { error: e.message }; }
+    } catch(e) {
+        console.error('send:', e.message);
+        await dmAdmin(`send() falló en canal ${channelId}: ${e.message}`);
+        return { error: e.message };
+    }
 }
 
 // ── Embed builders con fields (más anchos y legibles) ─────────────────────
 
-function embedSancion(staff, nick, modalidad, tiempo, razon, pruebas) {
+// ── Embed builders ────────────────────────────────────────────────────────
+
+async function embedSancion(staff, nick, modalidad, tiempo, razon, pruebas) {
+    const icon = await getAuthorIcon(staff);
+    const author = icon
+        ? { name: `Ejecutado por ${staff}`, iconURL: icon }
+        : { name: `Ejecutado por ${staff}` };
     return new EmbedBuilder()
         .setColor(0xFF4444)
-        .setAuthor({ name: `Ejecutado por ${staff}`, iconURL: skinUrl(staff) })
+        .setAuthor(author)
         .setTitle('🚫 Nueva Sanción')
         .setThumbnail(skinUrl(nick || staff))
         .setDescription(
@@ -189,10 +246,14 @@ function embedSancion(staff, nick, modalidad, tiempo, razon, pruebas) {
         .setFooter({ text: 'Tilted Staff' });
 }
 
-function embedSS(staff, nick, modalidad, razon, pruebas, tiempo) {
+async function embedSS(staff, nick, modalidad, razon, pruebas, tiempo) {
+    const icon = await getAuthorIcon(staff);
+    const author = icon
+        ? { name: `Ejecutado por ${staff}`, iconURL: icon }
+        : { name: `Ejecutado por ${staff}` };
     return new EmbedBuilder()
         .setColor(0x9B59B6)
-        .setAuthor({ name: `Ejecutado por ${staff}`, iconURL: skinUrl(staff) })
+        .setAuthor(author)
         .setTitle('🖥️ SS Ban')
         .setThumbnail(skinUrl(nick || staff))
         .setDescription(
@@ -208,10 +269,14 @@ function embedSS(staff, nick, modalidad, razon, pruebas, tiempo) {
         .setFooter({ text: 'Tilted Staff • SS Ban' });
 }
 
-function embedRB(staff, modalidad, nick, nick2, razon, tipo) {
+async function embedRB(staff, modalidad, nick, nick2, razon, tipo) {
+    const icon = await getAuthorIcon(staff);
+    const author = icon
+        ? { name: `Ejecutado por ${staff}`, iconURL: icon }
+        : { name: `Ejecutado por ${staff}` };
     return new EmbedBuilder()
         .setColor(tipo === 'online' ? 0x2ECC71 : 0xE74C3C)
-        .setAuthor({ name: `Ejecutado por ${staff}`, iconURL: skinUrl(staff) })
+        .setAuthor(author)
         .setTitle(`🔄 Rollback ${tipo==='online' ? '🟢 Online' : '🔴 Offline'}`)
         .setThumbnail(skinUrl(nick || staff))
         .setDescription(
@@ -226,10 +291,14 @@ function embedRB(staff, modalidad, nick, nick2, razon, tipo) {
         .setFooter({ text: 'Tilted Staff' });
 }
 
-function embedMute(staff, nick, modalidad, tiempo, razon, pruebas) {
+async function embedMute(staff, nick, modalidad, tiempo, razon, pruebas) {
+    const icon = await getAuthorIcon(staff);
+    const author = icon
+        ? { name: `Ejecutado por ${staff}`, iconURL: icon }
+        : { name: `Ejecutado por ${staff}` };
     return new EmbedBuilder()
         .setColor(0xF39C12)
-        .setAuthor({ name: `Ejecutado por ${staff}`, iconURL: skinUrl(staff) })
+        .setAuthor(author)
         .setTitle('🔇 Nuevo Mute')
         .setThumbnail(skinUrl(nick || staff))
         .setDescription(
@@ -321,7 +390,61 @@ client.on('interactionCreate', async interaction => {
         });
     }
 
-    if (cmd === 'sync-staff') {
+    if (cmd === 'historial') {
+        await interaction.deferReply();
+        const nick = interaction.options.getString('nick');
+        const entries = await getHistorial(nick);
+        if (!entries.length) {
+            await interaction.editReply(`No hay registros para **${nick}**.`);
+            return;
+        }
+        const tipos = { ban:'🚫 Ban', 'ss-ban':'🖥️ SS Ban', mute:'🔇 Mute', rollback:'🔄 Rollback', unban:'🔓 Unban' };
+        const lines = entries.slice(0, 10).map(e => {
+            const fecha = new Date(e.fecha).toLocaleDateString('es-ES', { day:'2-digit', month:'2-digit', year:'numeric' });
+            const tipo  = tipos[e.tipo] || e.tipo;
+            const razon = e.datos?.razon || '—';
+            return `**${tipo}** — ${fecha} — por \`${e.staff}\`\n> ${razon}`;
+        }).join('\n\n');
+        const embed = new EmbedBuilder()
+            .setColor(0x5865F2)
+            .setTitle(`📋 Historial de ${nick}`)
+            .setThumbnail(skinUrl(nick))
+            .setDescription(lines)
+            .setFooter({ text: `${entries.length} registro${entries.length !== 1 ? 's' : ''} total  •  Tilted Staff` })
+            .setTimestamp();
+        await interaction.editReply({ embeds: [embed] });
+    }
+
+    if (cmd === 'staff-info') {
+        await interaction.deferReply();
+        const usuario = interaction.options.getString('usuario');
+        const weekData  = await getLB('normal', 'week');
+        const monthData = await getLB('normal', 'month');
+        const ssWeek    = await getLB('ss', 'week');
+        const ssMonth   = await getLB('ss', 'month');
+        const wn = weekData[usuario]  || {};
+        const mn = monthData[usuario] || {};
+        const ws = ssWeek[usuario]    || {};
+        const ms = ssMonth[usuario]   || {};
+        const mention = await resolveMention(usuario);
+        const embed = new EmbedBuilder()
+            .setColor(0xF39C12)
+            .setTitle(`📊 Stats de ${usuario}`)
+            .setDescription(`${mention}`)
+            .addFields(
+                { name: '📅 Esta semana', value:
+                    `🚫 \`${wn.sanciones||0}\` bans  •  🔄 \`${wn.rollbacks||0}\` rbs  •  🔇 \`${wn.mutes||0}\` mutes\n` +
+                    `🖥️ \`${ws.ss||0}\` ss  •  📨 \`${ws['ss-appeal']||0}\` appeals  •  ✅ \`${ws['ss-clean']||0}\` cleans`,
+                    inline: false },
+                { name: '📆 Este mes', value:
+                    `🚫 \`${mn.sanciones||0}\` bans  •  🔄 \`${mn.rollbacks||0}\` rbs  •  🔇 \`${mn.mutes||0}\` mutes\n` +
+                    `🖥️ \`${ms.ss||0}\` ss  •  📨 \`${ms['ss-appeal']||0}\` appeals  •  ✅ \`${ms['ss-clean']||0}\` cleans`,
+                    inline: false },
+            )
+            .setTimestamp()
+            .setFooter({ text: 'Tilted Staff' });
+        await interaction.editReply({ embeds: [embed] });
+    }
         await interaction.deferReply({ ephemeral: true });
         try {
             const guild = await client.guilds.fetch(GUILD_ID);
@@ -375,34 +498,42 @@ app.get('/discord-map', auth, async (req,res) => {
 app.post('/sancion', auth, async (req,res) => {
     const { staff, modalidad, razon, tiempo, nick, pruebas, imagenes } = req.body;
     await addStat(staff, 'sanciones');
-    res.json(await send(CHANNEL_SANCIONES, embedSancion(staff,nick,modalidad,tiempo,razon,pruebas), imagenes));
+    await saveHistorial(nick, 'ban', staff, { modalidad, tiempo, razon, pruebas });
+    res.json(await send(CHANNEL_SANCIONES, await embedSancion(staff,nick,modalidad,tiempo,razon,pruebas), imagenes));
 });
 
 app.post('/ss', auth, async (req,res) => {
     const { staff, modalidad, razon, nick, pruebas, imagenes, tiempo } = req.body;
     await addStat(staff, 'ss');
+    await saveHistorial(nick, 'ss-ban', staff, { modalidad, tiempo, razon, pruebas });
     if (!CHANNEL_SS) return res.json({ error: 'Canal no configurado' });
     try {
         const ch = await client.channels.fetch(CHANNEL_SS);
-        const msg = await ch.send({ embeds: [embedSS(staff,nick,modalidad,razon,pruebas,tiempo)] });
+        const msg = await ch.send({ embeds: [await embedSS(staff,nick,modalidad,razon,pruebas,tiempo)] });
         const files = (imagenes||[]).map((b,i)=>toAttachment(b,i)).filter(Boolean);
         if (files.length > 0) await ch.send({ files });
         await msg.react('✅');
         await msg.react('❌');
         res.json({ ok: true });
-    } catch(e) { console.error('ss:', e.message); res.json({ error: e.message }); }
+    } catch(e) {
+        console.error('ss:', e.message);
+        await dmAdmin(`/ss falló: ${e.message}`);
+        res.json({ error: e.message });
+    }
 });
 
 app.post('/rollback', auth, async (req,res) => {
     const { staff, modalidad, nick, nick2, razon, tipo, imagenes } = req.body;
     await addStat(staff, 'rollbacks');
-    res.json(await send(CHANNEL_ROLLBACKS, embedRB(staff,modalidad,nick,nick2,razon,tipo), imagenes));
+    await saveHistorial(nick, 'rollback', staff, { modalidad, nick2, razon, tipo });
+    res.json(await send(CHANNEL_ROLLBACKS, await embedRB(staff,modalidad,nick,nick2,razon,tipo), imagenes));
 });
 
 app.post('/mute', auth, async (req,res) => {
     const { staff, modalidad, nick, tiempo, razon, pruebas, imagenes } = req.body;
     await addStat(staff, 'mutes');
-    res.json(await send(CHANNEL_MUTES, embedMute(staff,nick,modalidad,tiempo,razon,pruebas), imagenes));
+    await saveHistorial(nick, 'mute', staff, { modalidad, tiempo, razon, pruebas });
+    res.json(await send(CHANNEL_MUTES, await embedMute(staff,nick,modalidad,tiempo,razon,pruebas), imagenes));
 });
 
 app.post('/unbaneo', auth, async (req,res) => {
@@ -540,6 +671,16 @@ async function registerCommands() {
         new SlashCommandBuilder().setName('top-mensual').setDescription('Ranking mensual del staff (sanciones, rollbacks, mutes)').toJSON(),
         new SlashCommandBuilder().setName('top-ss-semanal').setDescription('Ranking semanal de SS (bans, appeals, cleans, notes)').toJSON(),
         new SlashCommandBuilder().setName('top-ss-mensual').setDescription('Ranking mensual de SS (bans, appeals, cleans, notes)').toJSON(),
+        new SlashCommandBuilder()
+            .setName('historial')
+            .setDescription('Muestra el historial de sanciones de un jugador')
+            .addStringOption(o => o.setName('nick').setDescription('Nick del jugador de Minecraft').setRequired(true))
+            .toJSON(),
+        new SlashCommandBuilder()
+            .setName('staff-info')
+            .setDescription('Muestra las stats de un staff específico')
+            .addStringOption(o => o.setName('usuario').setDescription('Usuario del StaffPanel').setRequired(true))
+            .toJSON(),
         new SlashCommandBuilder()
             .setName('vincular')
             .setDescription('Vincula tu usuario del panel con tu Discord')

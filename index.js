@@ -14,7 +14,7 @@ const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.GuildMembers   // ← necesario para buscar miembros
+        GatewayIntentBits.GuildMembers
     ]
 });
 const app = express();
@@ -46,6 +46,35 @@ async function connectRedis() {
     console.log('Redis conectado');
 }
 
+// ── Geolocalización de IP ──────────────────────────────────────────────────
+async function getCountry(ip) {
+    try {
+        // IPs locales / privadas
+        if (!ip || ip === '—' || ip.startsWith('127.') || ip.startsWith('::1') ||
+            ip.startsWith('10.') || ip.startsWith('192.168.') || ip.startsWith('::ffff:127.')) {
+            return 'Local';
+        }
+        // Limpiar IPv4 mapeada en IPv6 (::ffff:1.2.3.4)
+        const cleanIp = ip.replace(/^::ffff:/, '').split(',')[0].trim();
+        const res = await Promise.race([
+            fetch(`http://ip-api.com/json/${cleanIp}?fields=country,countryCode`),
+            new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 3000))
+        ]);
+        const data = await res.json();
+        if (data.country) return `${data.country} ${getFlagEmoji(data.countryCode)}`;
+        return '—';
+    } catch {
+        return '—';
+    }
+}
+
+function getFlagEmoji(countryCode) {
+    if (!countryCode || countryCode.length !== 2) return '';
+    return countryCode.toUpperCase().replace(/./g, c =>
+        String.fromCodePoint(c.charCodeAt(0) + 127397)
+    );
+}
+
 // ── Users en servidor ─────────────────────────────────────────────────────
 const USERS_KEY = 'sp:users';
 
@@ -53,7 +82,6 @@ async function getServerUsers() {
     if (redis) {
         const raw = await redis.get(USERS_KEY);
         if (raw) return JSON.parse(raw);
-        // Primera vez — crear admin con hash real
         const hash = await bcrypt.hash('admin123', SALT_ROUNDS);
         const defaults = [{ username: 'admin', password: hash, role: 'admin', discordId: '' }];
         await redis.set(USERS_KEY, JSON.stringify(defaults));
@@ -146,7 +174,7 @@ function toAttachment(b64, i) {
     } catch(e) { return null; }
 }
 
-// ── Discord ID map — staffUsername → discordId ─────────────────────────────
+// ── Discord ID map ─────────────────────────────────────────────────────────
 const DISCORD_MAP_KEY = 'discord:map';
 
 async function getDiscordMap() {
@@ -167,10 +195,8 @@ async function setDiscordId(staff, discordId) {
 }
 
 async function resolveMention(staffNick) {
-    // Primero busca en el mapa de IDs guardados
     const map = await getDiscordMap();
     if (map[staffNick]) return `<@${map[staffNick]}>`;
-    // Fallback: busca por nombre en el guild
     try {
         const guild = await client.guilds.fetch(GUILD_ID);
         const members = await guild.members.fetch();
@@ -191,7 +217,6 @@ function skinUrl(nick) {
     return `https://mc-heads.net/avatar/${encodeURIComponent(nick)}/128`;
 }
 
-// Obtiene el avatar de Discord del staff si tiene ID vinculada, sino omite el icon
 async function getAuthorIcon(staffName) {
     try {
         const map = await getDiscordMap();
@@ -250,7 +275,7 @@ async function saveHistorial(nick, tipo, staff, datos) {
     const entry = { tipo, staff, datos, fecha: Date.now() };
     if (redis) {
         await redis.lPush(key, JSON.stringify(entry));
-        await redis.lTrim(key, 0, 49); // máximo 50 entradas por jugador
+        await redis.lTrim(key, 0, 49);
     } else {
         if (!global.historial) global.historial = {};
         if (!global.historial[key]) global.historial[key] = [];
@@ -300,9 +325,7 @@ async function getAntecedentes(nick) {
 
 async function embedSancion(staff, nick, modalidad, tiempo, razon, pruebas) {
     const icon = await getAuthorIcon(staff);
-    const author = icon
-        ? { name: `Ejecutado por ${staff}`, iconURL: icon }
-        : { name: `Ejecutado por ${staff}` };
+    const author = icon ? { name: `Ejecutado por ${staff}`, iconURL: icon } : { name: `Ejecutado por ${staff}` };
     const antecedentes = await getAntecedentes(nick);
     return new EmbedBuilder()
         .setColor(0xFF4444)
@@ -310,14 +333,8 @@ async function embedSancion(staff, nick, modalidad, tiempo, razon, pruebas) {
         .setTitle('🚫 Nueva Sanción')
         .setThumbnail(skinUrl(nick || staff))
         .setDescription(
-            `\`\`\`yaml\n` +
-            `👤 Nick: ${s(nick)}\n` +
-            `📋 Razón: ${s(razon)}\n` +
-            `⏱️ Tiempo: ${s(tiempo)}\n` +
-            `🎮 Modalidad: ${s(modalidad)}\n\n` +
-            `🔗 Pruebas: ${s(pruebas) || '—'}\n` +
-            (antecedentes ? `\n${antecedentes}\n` : '') +
-            `\`\`\``
+            `\`\`\`yaml\n👤 Nick: ${s(nick)}\n📋 Razón: ${s(razon)}\n⏱️ Tiempo: ${s(tiempo)}\n🎮 Modalidad: ${s(modalidad)}\n\n🔗 Pruebas: ${s(pruebas) || '—'}\n` +
+            (antecedentes ? `\n${antecedentes}\n` : '') + `\`\`\``
         )
         .setTimestamp()
         .setFooter({ text: 'Tilted Staff' });
@@ -325,9 +342,7 @@ async function embedSancion(staff, nick, modalidad, tiempo, razon, pruebas) {
 
 async function embedSS(staff, nick, modalidad, razon, pruebas, tiempo) {
     const icon = await getAuthorIcon(staff);
-    const author = icon
-        ? { name: `Ejecutado por ${staff}`, iconURL: icon }
-        : { name: `Ejecutado por ${staff}` };
+    const author = icon ? { name: `Ejecutado por ${staff}`, iconURL: icon } : { name: `Ejecutado por ${staff}` };
     const antecedentes = await getAntecedentes(nick);
     return new EmbedBuilder()
         .setColor(0x9B59B6)
@@ -335,14 +350,8 @@ async function embedSS(staff, nick, modalidad, razon, pruebas, tiempo) {
         .setTitle('🖥️ SS Ban')
         .setThumbnail(skinUrl(nick || staff))
         .setDescription(
-            `\`\`\`yaml\n` +
-            `👤 Nick: ${s(nick)}\n` +
-            `🎮 Modalidad: ${s(modalidad)}\n` +
-            `⏱️ Tiempo: ${s(tiempo) || 'Permanente'}\n` +
-            `📋 Razón: ${s(razon)}\n` +
-            `🔗 Pruebas: ${s(pruebas) || '—'}\n` +
-            (antecedentes ? `\n${antecedentes}\n` : '') +
-            `\`\`\``
+            `\`\`\`yaml\n👤 Nick: ${s(nick)}\n🎮 Modalidad: ${s(modalidad)}\n⏱️ Tiempo: ${s(tiempo) || 'Permanente'}\n📋 Razón: ${s(razon)}\n🔗 Pruebas: ${s(pruebas) || '—'}\n` +
+            (antecedentes ? `\n${antecedentes}\n` : '') + `\`\`\``
         )
         .setTimestamp()
         .setFooter({ text: 'Tilted Staff • SS Ban' });
@@ -350,31 +359,20 @@ async function embedSS(staff, nick, modalidad, razon, pruebas, tiempo) {
 
 async function embedRB(staff, modalidad, nick, nick2, razon, tipo) {
     const icon = await getAuthorIcon(staff);
-    const author = icon
-        ? { name: `Ejecutado por ${staff}`, iconURL: icon }
-        : { name: `Ejecutado por ${staff}` };
+    const author = icon ? { name: `Ejecutado por ${staff}`, iconURL: icon } : { name: `Ejecutado por ${staff}` };
     return new EmbedBuilder()
         .setColor(tipo === 'online' ? 0x2ECC71 : 0xE74C3C)
         .setAuthor(author)
         .setTitle(`🔄 Rollback ${tipo==='online' ? '🟢 Online' : '🔴 Offline'}`)
         .setThumbnail(skinUrl(nick || staff))
-        .setDescription(
-            `\`\`\`yaml\n` +
-            `👤 Nick: ${s(nick)}\n` +
-            `👥 Nick involucrado: ${s(nick2)}\n` +
-            `🎮 Modalidad: ${s(modalidad)}\n\n` +
-            `📋 Razón: ${s(razon)}\n` +
-            `\`\`\``
-        )
+        .setDescription(`\`\`\`yaml\n👤 Nick: ${s(nick)}\n👥 Nick involucrado: ${s(nick2)}\n🎮 Modalidad: ${s(modalidad)}\n\n📋 Razón: ${s(razon)}\n\`\`\``)
         .setTimestamp()
         .setFooter({ text: 'Tilted Staff' });
 }
 
 async function embedMute(staff, nick, modalidad, tiempo, razon, pruebas) {
     const icon = await getAuthorIcon(staff);
-    const author = icon
-        ? { name: `Ejecutado por ${staff}`, iconURL: icon }
-        : { name: `Ejecutado por ${staff}` };
+    const author = icon ? { name: `Ejecutado por ${staff}`, iconURL: icon } : { name: `Ejecutado por ${staff}` };
     const antecedentes = await getAntecedentes(nick);
     return new EmbedBuilder()
         .setColor(0xF39C12)
@@ -382,14 +380,8 @@ async function embedMute(staff, nick, modalidad, tiempo, razon, pruebas) {
         .setTitle('🔇 Nuevo Mute')
         .setThumbnail(skinUrl(nick || staff))
         .setDescription(
-            `\`\`\`yaml\n` +
-            `👤 Nick: ${s(nick)}\n` +
-            `📋 Razón: ${s(razon)}\n` +
-            `⏱️ Tiempo: ${s(tiempo)}\n` +
-            `🎮 Modalidad: ${s(modalidad)}\n\n` +
-            `🔗 Pruebas: ${s(pruebas) || '—'}\n` +
-            (antecedentes ? `\n${antecedentes}\n` : '') +
-            `\`\`\``
+            `\`\`\`yaml\n👤 Nick: ${s(nick)}\n📋 Razón: ${s(razon)}\n⏱️ Tiempo: ${s(tiempo)}\n🎮 Modalidad: ${s(modalidad)}\n\n🔗 Pruebas: ${s(pruebas) || '—'}\n` +
+            (antecedentes ? `\n${antecedentes}\n` : '') + `\`\`\``
         )
         .setTimestamp()
         .setFooter({ text: 'Tilted Staff' });
@@ -410,35 +402,20 @@ async function buildLBEmbed(data, cat, periodo) {
         .setFooter({ text: `Tilted Staff  •  ${reset}` });
 
     entries.sort((a,b) =>
-        Object.values(b[1]).reduce((s,v)=>s+v,0) -
-        Object.values(a[1]).reduce((s,v)=>s+v,0)
+        Object.values(b[1]).reduce((s,v)=>s+v,0) - Object.values(a[1]).reduce((s,v)=>s+v,0)
     );
 
     const medals = ['🥇','🥈','🥉'];
     const mentions = await Promise.all(entries.map(([staff]) => resolveMention(staff)));
 
     const lines = entries.map(([staff, stats], i) => {
-        const total  = Object.values(stats).reduce((s,v)=>s+v,0);
-        const medal  = medals[i] || `**#${i+1}**`;
+        const total   = Object.values(stats).reduce((s,v)=>s+v,0);
+        const medal   = medals[i] || `**#${i+1}**`;
         const mention = mentions[i];
-
         if (cat==='ss') {
-            const ban    = stats['ss']       || 0;
-            const appeal = stats['ss-appeal']|| 0;
-            const clean  = stats['ss-clean'] || 0;
-            const notes  = stats['ss-notes'] || 0;
-            return (
-                `${medal} ${mention} — **${total}** acciones\n` +
-                `> 🚫 \`${ban}\` ban  •  📨 \`${appeal}\` appeal  •  ✅ \`${clean}\` clean  •  📝 \`${notes}\` notes`
-            );
+            return `${medal} ${mention} — **${total}** acciones\n> 🚫 \`${stats['ss']||0}\` ban  •  📨 \`${stats['ss-appeal']||0}\` appeal  •  ✅ \`${stats['ss-clean']||0}\` clean  •  📝 \`${stats['ss-notes']||0}\` notes`;
         }
-        const bans  = stats.sanciones  || 0;
-        const rbs   = stats.rollbacks  || 0;
-        const mutes = stats.mutes      || 0;
-        return (
-            `${medal} ${mention} — **${total}** acciones\n` +
-            `> 🚫 \`${bans}\` bans  •  🔄 \`${rbs}\` rollbacks  •  🔇 \`${mutes}\` mutes`
-        );
+        return `${medal} ${mention} — **${total}** acciones\n> 🚫 \`${stats.sanciones||0}\` bans  •  🔄 \`${stats.rollbacks||0}\` rollbacks  •  🔇 \`${stats.mutes||0}\` mutes`;
     }).join('\n\n');
 
     return new EmbedBuilder()
@@ -466,26 +443,18 @@ client.on('interactionCreate', async interaction => {
         const usuario = interaction.options.getString('usuario');
         const discordId = interaction.user.id;
         await setDiscordId(usuario, discordId);
-        await interaction.reply({
-            content: `✅ Tu usuario **${usuario}** fue vinculado a ${interaction.user}. Aparecerás mencionado en el top.`,
-            ephemeral: true
-        });
+        await interaction.reply({ content: `✅ Tu usuario **${usuario}** fue vinculado a ${interaction.user}. Aparecerás mencionado en el top.`, ephemeral: true });
     }
 
     if (cmd === 'historial') {
         await interaction.deferReply();
         const nick = interaction.options.getString('nick');
         const entries = await getHistorial(nick);
-        if (!entries.length) {
-            await interaction.editReply(`No hay registros para **${nick}**.`);
-            return;
-        }
+        if (!entries.length) { await interaction.editReply(`No hay registros para **${nick}**.`); return; }
         const tipos = { ban:'🚫 Ban', 'ss-ban':'🖥️ SS Ban', mute:'🔇 Mute', rollback:'🔄 Rollback', unban:'🔓 Unban' };
         const lines = entries.slice(0, 10).map(e => {
             const fecha = new Date(e.fecha).toLocaleDateString('es-ES', { day:'2-digit', month:'2-digit', year:'numeric' });
-            const tipo  = tipos[e.tipo] || e.tipo;
-            const razon = e.datos?.razon || '—';
-            return `**${tipo}** — ${fecha} — por \`${e.staff}\`\n> ${razon}`;
+            return `**${tipos[e.tipo]||e.tipo}** — ${fecha} — por \`${e.staff}\`\n> ${e.datos?.razon || '—'}`;
         }).join('\n\n');
         const embed = new EmbedBuilder()
             .setColor(0x5865F2)
@@ -500,16 +469,12 @@ client.on('interactionCreate', async interaction => {
     if (cmd === 'staff-info') {
         await interaction.deferReply();
         let usuario = interaction.options.getString('usuario');
-
-        // Si pasaron un Discord ID o mención, resolver al username del panel
         const cleanId = usuario.replace(/[<@!>]/g, '');
         if (/^\d+$/.test(cleanId)) {
-            // Es un Discord ID — buscar el username en el mapa inverso
             const map = await getDiscordMap();
             const found = Object.entries(map).find(([, id]) => id === cleanId);
             if (found) usuario = found[0];
         }
-
         const weekData  = await getLB('normal', 'week');
         const monthData = await getLB('normal', 'month');
         const ssWeek    = await getLB('ss', 'week');
@@ -522,26 +487,14 @@ client.on('interactionCreate', async interaction => {
         const map = await getDiscordMap();
         const discordId = map[usuario];
         let avatarUrl = null;
-        if (discordId) {
-            try {
-                const u = await client.users.fetch(discordId);
-                avatarUrl = u.displayAvatarURL({ size: 128 });
-            } catch {}
-        }
-
+        if (discordId) { try { const u = await client.users.fetch(discordId); avatarUrl = u.displayAvatarURL({ size: 128 }); } catch {} }
         const embed = new EmbedBuilder()
             .setColor(0xF39C12)
             .setTitle(`📊 Stats de ${usuario}`)
             .setDescription(mention)
             .addFields(
-                { name: '📅 Esta semana', value:
-                    `🚫 \`${wn.sanciones||0}\` bans  •  🔄 \`${wn.rollbacks||0}\` rbs  •  🔇 \`${wn.mutes||0}\` mutes\n` +
-                    `🖥️ \`${ws.ss||0}\` ss  •  📨 \`${ws['ss-appeal']||0}\` appeals  •  ✅ \`${ws['ss-clean']||0}\` cleans`,
-                    inline: false },
-                { name: '📆 Este mes', value:
-                    `🚫 \`${mn.sanciones||0}\` bans  •  🔄 \`${mn.rollbacks||0}\` rbs  •  🔇 \`${mn.mutes||0}\` mutes\n` +
-                    `🖥️ \`${ms.ss||0}\` ss  •  📨 \`${ms['ss-appeal']||0}\` appeals  •  ✅ \`${ms['ss-clean']||0}\` cleans`,
-                    inline: false },
+                { name: '📅 Esta semana', value: `🚫 \`${wn.sanciones||0}\` bans  •  🔄 \`${wn.rollbacks||0}\` rbs  •  🔇 \`${wn.mutes||0}\` mutes\n🖥️ \`${ws.ss||0}\` ss  •  📨 \`${ws['ss-appeal']||0}\` appeals  •  ✅ \`${ws['ss-clean']||0}\` cleans`, inline: false },
+                { name: '📆 Este mes',    value: `🚫 \`${mn.sanciones||0}\` bans  •  🔄 \`${mn.rollbacks||0}\` rbs  •  🔇 \`${mn.mutes||0}\` mutes\n🖥️ \`${ms.ss||0}\` ss  •  📨 \`${ms['ss-appeal']||0}\` appeals  •  ✅ \`${ms['ss-clean']||0}\` cleans`, inline: false },
             )
             .setTimestamp()
             .setFooter({ text: 'Tilted Staff' });
@@ -551,23 +504,16 @@ client.on('interactionCreate', async interaction => {
 
     if (cmd === 'create-profile') {
         await interaction.deferReply({ ephemeral: true });
-        // Verificar que quien ejecuta es admin del panel
         const callerDiscordId = interaction.user.id;
         const users = await getServerUsers();
         const caller = users.find(u => u.discordId === callerDiscordId);
-        if (!caller || caller.role !== 'admin') {
-            return await interaction.editReply('❌ Solo los admins del StaffPanel pueden usar este comando.');
-        }
-        const username   = interaction.options.getString('username');
-        const password   = interaction.options.getString('password');
-        const discordId  = interaction.options.getString('discord_id');
-        const rol        = interaction.options.getString('rol') || 'staff';
-        if (!['staff','admin'].includes(rol)) {
-            return await interaction.editReply('❌ El rol debe ser `staff` o `admin`.');
-        }
-        if (users.find(u => u.username === username)) {
-            return await interaction.editReply(`❌ Ya existe un usuario con el nombre **${username}**.`);
-        }
+        if (!caller || caller.role !== 'admin') return await interaction.editReply('❌ Solo los admins del StaffPanel pueden usar este comando.');
+        const username  = interaction.options.getString('username');
+        const password  = interaction.options.getString('password');
+        const discordId = interaction.options.getString('discord_id');
+        const rol       = interaction.options.getString('rol') || 'staff';
+        if (!['staff','admin'].includes(rol)) return await interaction.editReply('❌ El rol debe ser `staff` o `admin`.');
+        if (users.find(u => u.username === username)) return await interaction.editReply(`❌ Ya existe un usuario con el nombre **${username}**.`);
         const hashed = await bcrypt.hash(password, SALT_ROUNDS);
         users.push({ username, password: hashed, role: rol, discordId });
         await saveServerUsers(users);
@@ -583,25 +529,17 @@ client.on('interactionCreate', async interaction => {
             const members = await guild.members.fetch();
             const map = await getDiscordMap();
             let linked = 0;
-
             for (const [, member] of members) {
-                const lower   = member.user.username.toLowerCase();
+                const lower = member.user.username.toLowerCase();
                 const display = member.displayName.toLowerCase();
-                const nick    = (member.nickname || '').toLowerCase();
-
-                // Buscar si algún staff del mapa coincide con este miembro
+                const nick = (member.nickname || '').toLowerCase();
                 for (const staffName of Object.keys(map)) {
                     const sl = staffName.toLowerCase();
                     if (sl === lower || sl === display || sl === nick) {
-                        const currentId = map[staffName];
-                        if (currentId !== member.user.id) {
-                            await setDiscordId(staffName, member.user.id);
-                            linked++;
-                        }
+                        if (map[staffName] !== member.user.id) { await setDiscordId(staffName, member.user.id); linked++; }
                     }
                 }
             }
-
             await interaction.editReply(`✅ Sync completo. **${linked}** staff vinculados automáticamente.`);
         } catch(e) {
             console.error('sync-staff:', e.message);
@@ -609,22 +547,15 @@ client.on('interactionCreate', async interaction => {
         }
     }
 
-    // ── NUEVO: Reset reincidencias ─────────────────────────────────────────
     if (cmd === 'reset-reincidencias') {
         await interaction.deferReply({ ephemeral: true });
         const callerDiscordId = interaction.user.id;
         const users = await getServerUsers();
         const caller = users.find(u => u.discordId === callerDiscordId);
-        if (!caller || caller.role !== 'admin') {
-            return await interaction.editReply('❌ Solo los admins del StaffPanel pueden usar este comando.');
-        }
+        if (!caller || caller.role !== 'admin') return await interaction.editReply('❌ Solo los admins del StaffPanel pueden usar este comando.');
         const nick = interaction.options.getString('nick');
         const key = HIST_KEY(nick);
-        if (redis) {
-            await redis.del(key);
-        } else {
-            if (global.historial) delete global.historial[key];
-        }
+        if (redis) { await redis.del(key); } else { if (global.historial) delete global.historial[key]; }
         await interaction.editReply(`✅ Reincidencias de **${nick}** reseteadas correctamente.`);
     }
 });
@@ -633,46 +564,20 @@ client.on('interactionCreate', async interaction => {
 app.post('/oauth/callback', async (req, res) => {
     const { code } = req.body;
     if (!code) return res.status(400).json({ error: 'Falta code' });
-    console.log(`[OAuth] Recibido code en ${new Date().toISOString()}`);
     try {
-        const t1 = Date.now();
         const tokenRes = await fetch('https://discord.com/api/oauth2/token', {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams({
-                client_id:     DISCORD_CLIENT_ID,
-                client_secret: DISCORD_CLIENT_SECRET,
-                grant_type:    'authorization_code',
-                code,
-                redirect_uri:  DISCORD_REDIRECT_URI,
-            })
+            body: new URLSearchParams({ client_id: DISCORD_CLIENT_ID, client_secret: DISCORD_CLIENT_SECRET, grant_type: 'authorization_code', code, redirect_uri: DISCORD_REDIRECT_URI })
         });
         const tokenData = await tokenRes.json();
-        console.log(`[OAuth] Token response en ${Date.now()-t1}ms:`, tokenData.error || 'OK');
-        if (!tokenData.access_token) {
-            console.log('[OAuth] Token data completo:', JSON.stringify(tokenData));
-            return res.status(400).json({ error: 'Token inválido', detail: tokenData });
-        }
-
-        const t2 = Date.now();
-        // Obtener info del usuario
-        const userRes = await fetch('https://discord.com/api/users/@me', {
-            headers: { Authorization: `Bearer ${tokenData.access_token}` }
-        });
+        if (!tokenData.access_token) return res.status(400).json({ error: 'Token inválido', detail: tokenData });
+        const userRes = await fetch('https://discord.com/api/users/@me', { headers: { Authorization: `Bearer ${tokenData.access_token}` } });
         const user = await userRes.json();
-        console.log(`[OAuth] User fetch en ${Date.now()-t2}ms, id: ${user.id}, username: ${user.username}`);
-
         const avatarUrl = user.avatar
             ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png?size=128`
             : `https://cdn.discordapp.com/embed/avatars/${parseInt(user.discriminator || 0) % 5}.png`;
-
-        res.json({
-            ok: true,
-            discordId:   user.id,
-            username:    user.username,
-            displayName: user.global_name || user.username,
-            avatar:      avatarUrl,
-        });
+        res.json({ ok: true, discordId: user.id, username: user.username, displayName: user.global_name || user.username, avatar: avatarUrl });
     } catch(e) {
         console.error('oauth/callback:', e.message);
         res.status(500).json({ error: e.message });
@@ -682,7 +587,6 @@ app.post('/oauth/callback', async (req, res) => {
 // ── User management endpoints ──────────────────────────────────────────────
 app.get('/users', auth, async (req, res) => {
     const users = await getServerUsers();
-    // No mandar passwords al cliente
     res.json(users.map(u => ({ username: u.username, role: u.role, discordId: u.discordId || '' })));
 });
 
@@ -723,10 +627,11 @@ app.post('/users/update-discord', auth, async (req, res) => {
 const ACCESS_LOGS_KEY = 'sp:access_logs';
 
 async function saveAccessLog(username, ip, method) {
-    const entry = { username, ip, method, fecha: Date.now() };
+    const country = await getCountry(ip);
+    const entry = { username, ip, country, method, fecha: Date.now() };
     if (redis) {
         await redis.lPush(ACCESS_LOGS_KEY, JSON.stringify(entry));
-        await redis.lTrim(ACCESS_LOGS_KEY, 0, 199); // máximo 200 entradas
+        await redis.lTrim(ACCESS_LOGS_KEY, 0, 199);
     } else {
         if (!global.accessLogs) global.accessLogs = [];
         global.accessLogs.unshift(entry);
@@ -748,20 +653,13 @@ app.post('/auth/login', async (req, res) => {
     if (!username || !password) return res.json({ error: 'Faltan datos' });
     const users = await getServerUsers();
     const found = users.find(u => u.username === username);
-    if (!found) {
-        await saveAccessLog(username, ip, 'failed');
-        return res.json({ error: 'Usuario o contraseña incorrectos' });
-    }
+    if (!found) { await saveAccessLog(username, ip, 'failed'); return res.json({ error: 'Usuario o contraseña incorrectos' }); }
     const match = await bcrypt.compare(password, found.password).catch(() => false);
-    if (!match) {
-        await saveAccessLog(username, ip, 'failed');
-        return res.json({ error: 'Usuario o contraseña incorrectos' });
-    }
+    if (!match) { await saveAccessLog(username, ip, 'failed'); return res.json({ error: 'Usuario o contraseña incorrectos' }); }
     await saveAccessLog(username, ip, 'login');
     res.json({ ok: true, user: { username: found.username, role: found.role, discordId: found.discordId || '' } });
 });
 
-// También loguear acceso por Discord
 app.get('/auth/discord', async (req, res) => {
     const { discordId } = req.query;
     if (!discordId) return res.json({ error: 'Falta discordId' });
@@ -773,7 +671,6 @@ app.get('/auth/discord', async (req, res) => {
     res.json({ ok: true, user: { username: found.username, role: found.role, discordId: found.discordId } });
 });
 
-// ── Endpoint para ver los logs (solo desde panel) ──────────────────────────
 app.get('/access-logs', auth, async (req, res) => {
     const logs = await getAccessLogs();
     res.json({ ok: true, logs });
@@ -792,14 +689,13 @@ app.post('/users/change-password', auth, async (req, res) => {
     res.json({ ok: true });
 });
 
-// ── Top JSON endpoint para el panel ───────────────────────────────────────
+// ── Top JSON endpoint ──────────────────────────────────────────────────────
 app.get('/top', async (req, res) => {
     const cat     = req.query.cat    || 'normal';
     const periodo = req.query.periodo || 'week';
     const data    = await getLB(cat, periodo);
     const entries = Object.entries(data).sort((a,b) =>
-        Object.values(b[1]).reduce((s,v)=>s+v,0) -
-        Object.values(a[1]).reduce((s,v)=>s+v,0)
+        Object.values(b[1]).reduce((s,v)=>s+v,0) - Object.values(a[1]).reduce((s,v)=>s+v,0)
     );
     const map = await getDiscordMap();
     const result = await Promise.all(entries.slice(0,10).map(async ([staff, stats]) => {
@@ -807,10 +703,7 @@ app.get('/top', async (req, res) => {
         let avatar = null;
         if (discordId) {
             try {
-                const user = await Promise.race([
-                    client.users.fetch(discordId),
-                    new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 2000))
-                ]);
+                const user = await Promise.race([client.users.fetch(discordId), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 2000))]);
                 avatar = user.displayAvatarURL({ size: 64 });
             } catch {}
         }
@@ -821,9 +714,7 @@ app.get('/top', async (req, res) => {
 });
 
 // ── Health check ───────────────────────────────────────────────────────────
-app.get('/health', (req, res) => {
-    res.json({ ok: true, status: 'online', uptime: process.uptime() });
-});
+app.get('/health', (req, res) => res.json({ ok: true, status: 'online', uptime: process.uptime() }));
 app.get('/', (req,res) => res.json({ status:'online', bot:client.user?.tag||'conectando...' }));
 
 // ── Link Discord ID ────────────────────────────────────────────────────────
@@ -834,12 +725,9 @@ app.post('/link-discord', auth, async (req,res) => {
     res.json({ ok: true, message: `${staff} vinculado a <@${discordId}>` });
 });
 
-app.get('/discord-map', auth, async (req,res) => {
-    const map = await getDiscordMap();
-    res.json(map);
-});
+app.get('/discord-map', auth, async (req,res) => res.json(await getDiscordMap()));
 
-// ── Endpoints ──────────────────────────────────────────────────────────────
+// ── Endpoints de sanciones ─────────────────────────────────────────────────
 app.post('/sancion', auth, async (req,res) => {
     const { staff, modalidad, razon, tiempo, nick, pruebas, imagenes } = req.body;
     await addStat(staff, 'sanciones');
@@ -859,32 +747,20 @@ app.post('/ss', auth, async (req,res) => {
         const msg = await ch.send({ embeds: [await embedSS(staff,nick,modalidad,razon,pruebas,tiempo)] });
         const files = (imagenes||[]).map((b,i)=>toAttachment(b,i)).filter(Boolean);
         if (files.length > 0) await ch.send({ files });
-        await msg.react('✅');
-        await msg.react('❌');
+        await msg.react('✅'); await msg.react('❌');
         res.json({ ok: true });
-    } catch(e) {
-        console.error('ss:', e.message);
-        await dmAdmin(`/ss falló: ${e.message}`);
-        res.json({ error: e.message });
-    }
+    } catch(e) { console.error('ss:', e.message); await dmAdmin(`/ss falló: ${e.message}`); res.json({ error: e.message }); }
 });
 
-// ── Historial por staff (para panel admin) ─────────────────────────────────
 app.get('/staff-historial', auth, async (req, res) => {
     const { staff } = req.query;
     if (!staff) return res.json({ error: 'Falta staff' });
-    const entries = await getStaffHistorial(staff);
-    res.json({ ok: true, entries });
+    res.json({ ok: true, entries: await getStaffHistorial(staff) });
 });
 
 app.get('/staff-historial/all', auth, async (req, res) => {
     const users = await getServerUsers();
-    const result = await Promise.all(
-        users.map(async u => {
-            const entries = await getStaffHistorial(u.username);
-            return { staff: u.username, entries };
-        })
-    );
+    const result = await Promise.all(users.map(async u => ({ staff: u.username, entries: await getStaffHistorial(u.username) })));
     res.json({ ok: true, data: result });
 });
 
@@ -907,17 +783,10 @@ app.post('/mute', auth, async (req,res) => {
 app.post('/unbaneo', auth, async (req,res) => {
     const { staff, nick, razon, modalidad, imagenes } = req.body;
     const embed = new EmbedBuilder()
-        .setColor(0x43B581)
-        .setAuthor({ name: `Ejecutado por ${staff}`, iconURL: skinUrl(staff) })
-        .setTitle('🔓 Unbaneo')
-        .setThumbnail(skinUrl(nick || staff))
-        .addFields(
-            { name: '👤 Nick',      value: s(nick),      inline: true  },
-            { name: '🎮 Modalidad', value: s(modalidad), inline: true  },
-            { name: '📋 Razón',     value: s(razon),     inline: false },
-        )
-        .setTimestamp()
-        .setFooter({ text: `Tilted Staff` });
+        .setColor(0x43B581).setAuthor({ name: `Ejecutado por ${staff}`, iconURL: skinUrl(staff) })
+        .setTitle('🔓 Unbaneo').setThumbnail(skinUrl(nick || staff))
+        .addFields({ name: '👤 Nick', value: s(nick), inline: true }, { name: '🎮 Modalidad', value: s(modalidad), inline: true }, { name: '📋 Razón', value: s(razon), inline: false })
+        .setTimestamp().setFooter({ text: 'Tilted Staff' });
     res.json(await send(CHANNEL_SANCIONES, embed, imagenes));
 });
 
@@ -925,18 +794,10 @@ app.post('/ss-appeal', auth, async (req,res) => {
     const { staff, nick, razon, modalidad, pruebas, imagenes } = req.body;
     await addStat(staff, 'ss-appeal');
     const embed = new EmbedBuilder()
-        .setColor(0xE67E22)
-        .setAuthor({ name: `Ejecutado por ${staff}`, iconURL: skinUrl(staff) })
-        .setTitle('📨 SS Appeal')
-        .setThumbnail(skinUrl(nick || staff))
-        .addFields(
-            { name: '👤 Nick',       value: s(nick),       inline: true  },
-            { name: '🎮 Modalidad',  value: s(modalidad),  inline: true  },
-            { name: '📋 Razón',      value: s(razon),      inline: false },
-            { name: '🔗 Pruebas',    value: s(pruebas) || '—', inline: false },
-        )
-        .setTimestamp()
-        .setFooter({ text: `Tilted Staff • SS Appeal` });
+        .setColor(0xE67E22).setAuthor({ name: `Ejecutado por ${staff}`, iconURL: skinUrl(staff) })
+        .setTitle('📨 SS Appeal').setThumbnail(skinUrl(nick || staff))
+        .addFields({ name: '👤 Nick', value: s(nick), inline: true }, { name: '🎮 Modalidad', value: s(modalidad), inline: true }, { name: '📋 Razón', value: s(razon), inline: false }, { name: '🔗 Pruebas', value: s(pruebas)||'—', inline: false })
+        .setTimestamp().setFooter({ text: 'Tilted Staff • SS Appeal' });
     res.json(await send(CHANNEL_SS, embed, imagenes));
 });
 
@@ -944,15 +805,10 @@ app.post('/ss-clean', auth, async (req,res) => {
     const { staff, nick, imagenes } = req.body;
     await addStat(staff, 'ss-clean');
     const embed = new EmbedBuilder()
-        .setColor(0x43B581)
-        .setAuthor({ name: `Ejecutado por ${staff}`, iconURL: skinUrl(staff) })
-        .setTitle('✅ SS Clean')
-        .setThumbnail(skinUrl(nick || staff))
-        .addFields(
-            { name: '👤 Nick', value: s(nick), inline: true },
-        )
-        .setTimestamp()
-        .setFooter({ text: `Tilted Staff • SS Clean` });
+        .setColor(0x43B581).setAuthor({ name: `Ejecutado por ${staff}`, iconURL: skinUrl(staff) })
+        .setTitle('✅ SS Clean').setThumbnail(skinUrl(nick || staff))
+        .addFields({ name: '👤 Nick', value: s(nick), inline: true })
+        .setTimestamp().setFooter({ text: 'Tilted Staff • SS Clean' });
     res.json(await send(CHANNEL_SS, embed, imagenes));
 });
 
@@ -960,20 +816,13 @@ app.post('/ss-notes', auth, async (req,res) => {
     const { staff, nick, motivo, imagenes } = req.body;
     await addStat(staff, 'ss-notes');
     const embed = new EmbedBuilder()
-        .setColor(0x3498DB)
-        .setAuthor({ name: `Ejecutado por ${staff}`, iconURL: skinUrl(staff) })
-        .setTitle('📝 SS Notes')
-        .setThumbnail(skinUrl(nick || staff))
-        .addFields(
-            { name: '👤 Nick',    value: s(nick),   inline: true  },
-            { name: '📋 Motivo', value: s(motivo), inline: false },
-        )
-        .setTimestamp()
-        .setFooter({ text: `Tilted Staff • SS Notes` });
+        .setColor(0x3498DB).setAuthor({ name: `Ejecutado por ${staff}`, iconURL: skinUrl(staff) })
+        .setTitle('📝 SS Notes').setThumbnail(skinUrl(nick || staff))
+        .addFields({ name: '👤 Nick', value: s(nick), inline: true }, { name: '📋 Motivo', value: s(motivo), inline: false })
+        .setTimestamp().setFooter({ text: 'Tilted Staff • SS Notes' });
     res.json(await send(CHANNEL_SS, embed, imagenes));
 });
 
-// ── Vincular staff username → Discord ID ──────────────────────────────────
 app.post('/vincular', auth, async (req,res) => {
     const { staff, discordId } = req.body;
     if (!staff || !discordId) return res.json({ error: 'Faltan datos' });
@@ -981,38 +830,26 @@ app.post('/vincular', auth, async (req,res) => {
     res.json({ ok: true, message: `${staff} vinculado a <@${discordId}>` });
 });
 
-app.get('/vincular', auth, async (req,res) => {
-    const map = await getDiscordMap();
-    res.json({ ok: true, map });
-});
+app.get('/vincular', auth, async (req,res) => res.json({ ok: true, map: await getDiscordMap() }));
 
 app.delete('/vincular', auth, async (req,res) => {
     const { staff } = req.body;
     if (!staff) return res.json({ error: 'Falta staff' });
-    if (redis) { await redis.hDel(DISCORD_MAP_KEY, staff); }
-    else { if (global.discordMap) delete global.discordMap[staff]; }
+    if (redis) { await redis.hDel(DISCORD_MAP_KEY, staff); } else { if (global.discordMap) delete global.discordMap[staff]; }
     res.json({ ok: true });
 });
 
-// ── Auto-vincular al entrar al servidor ───────────────────────────────────
+// ── Auto-vincular ──────────────────────────────────────────────────────────
 async function tryAutoLink(member) {
     try {
         const map = await getDiscordMap();
+        if (Object.values(map).includes(member.user.id)) return;
         const lower = member.user.username.toLowerCase();
         const display = member.displayName.toLowerCase();
         const nick = (member.nickname || '').toLowerCase();
-
-        // Buscar en el mapa si ya está vinculado
-        const alreadyLinked = Object.values(map).includes(member.user.id);
-        if (alreadyLinked) return;
-
-        const staffNames = Object.keys(map);
-        for (const staffName of staffNames) {
-            if (
-                staffName.toLowerCase() === lower ||
-                staffName.toLowerCase() === display ||
-                staffName.toLowerCase() === nick
-            ) {
+        for (const staffName of Object.keys(map)) {
+            const sl = staffName.toLowerCase();
+            if (sl === lower || sl === display || sl === nick) {
                 await setDiscordId(staffName, member.user.id);
                 console.log(`Auto-vinculado: ${staffName} → ${member.user.id}`);
                 return;
@@ -1021,9 +858,7 @@ async function tryAutoLink(member) {
     } catch(e) { console.error('tryAutoLink:', e.message); }
 }
 
-client.on('guildMemberAdd', async member => {
-    await tryAutoLink(member);
-});
+client.on('guildMemberAdd', async member => await tryAutoLink(member));
 
 // ── Registrar slash commands ───────────────────────────────────────────────
 async function registerCommands() {
@@ -1033,38 +868,12 @@ async function registerCommands() {
         new SlashCommandBuilder().setName('top-mensual').setDescription('Ranking mensual del staff (sanciones, rollbacks, mutes)').toJSON(),
         new SlashCommandBuilder().setName('top-ss-semanal').setDescription('Ranking semanal de SS (bans, appeals, cleans, notes)').toJSON(),
         new SlashCommandBuilder().setName('top-ss-mensual').setDescription('Ranking mensual de SS (bans, appeals, cleans, notes)').toJSON(),
-        new SlashCommandBuilder()
-            .setName('historial')
-            .setDescription('Muestra el historial de sanciones de un jugador')
-            .addStringOption(o => o.setName('nick').setDescription('Nick del jugador de Minecraft').setRequired(true))
-            .toJSON(),
-        new SlashCommandBuilder()
-            .setName('staff-info')
-            .setDescription('Muestra las stats de un staff específico')
-            .addStringOption(o => o.setName('usuario').setDescription('Usuario del StaffPanel').setRequired(true))
-            .toJSON(),
-        new SlashCommandBuilder()
-            .setName('vincular')
-            .setDescription('Vincula tu usuario del panel con tu Discord')
-            .addStringOption(o => o.setName('usuario').setDescription('Tu usuario del StaffPanel').setRequired(true))
-            .toJSON(),
-        new SlashCommandBuilder()
-            .setName('create-profile')
-            .setDescription('Crea un perfil en el StaffPanel (solo admins)')
-            .addStringOption(o => o.setName('username').setDescription('Nombre de usuario').setRequired(true))
-            .addStringOption(o => o.setName('password').setDescription('Contraseña').setRequired(true))
-            .addStringOption(o => o.setName('discord_id').setDescription('Discord ID del staff').setRequired(true))
-            .addStringOption(o => o.setName('rol').setDescription('Rol: staff o admin (por defecto: staff)').setRequired(false))
-            .toJSON(),
-        new SlashCommandBuilder()
-            .setName('sync-staff')
-            .setDescription('Sincroniza todos los miembros del servidor con el mapa de Discord IDs (usar 1 vez)')
-            .toJSON(),
-        new SlashCommandBuilder()
-            .setName('reset-reincidencias')
-            .setDescription('Resetea el historial de baneos de un jugador (solo admins)')
-            .addStringOption(o => o.setName('nick').setDescription('Nick del jugador de Minecraft').setRequired(true))
-            .toJSON(),
+        new SlashCommandBuilder().setName('historial').setDescription('Muestra el historial de sanciones de un jugador').addStringOption(o => o.setName('nick').setDescription('Nick del jugador de Minecraft').setRequired(true)).toJSON(),
+        new SlashCommandBuilder().setName('staff-info').setDescription('Muestra las stats de un staff específico').addStringOption(o => o.setName('usuario').setDescription('Usuario del StaffPanel').setRequired(true)).toJSON(),
+        new SlashCommandBuilder().setName('vincular').setDescription('Vincula tu usuario del panel con tu Discord').addStringOption(o => o.setName('usuario').setDescription('Tu usuario del StaffPanel').setRequired(true)).toJSON(),
+        new SlashCommandBuilder().setName('create-profile').setDescription('Crea un perfil en el StaffPanel (solo admins)').addStringOption(o => o.setName('username').setDescription('Nombre de usuario').setRequired(true)).addStringOption(o => o.setName('password').setDescription('Contraseña').setRequired(true)).addStringOption(o => o.setName('discord_id').setDescription('Discord ID del staff').setRequired(true)).addStringOption(o => o.setName('rol').setDescription('Rol: staff o admin (por defecto: staff)').setRequired(false)).toJSON(),
+        new SlashCommandBuilder().setName('sync-staff').setDescription('Sincroniza todos los miembros del servidor con el mapa de Discord IDs').toJSON(),
+        new SlashCommandBuilder().setName('reset-reincidencias').setDescription('Resetea el historial de baneos de un jugador (solo admins)').addStringOption(o => o.setName('nick').setDescription('Nick del jugador de Minecraft').setRequired(true)).toJSON(),
     ];
     const rest = new REST({ version:'10' }).setToken(BOT_TOKEN);
     try {
@@ -1085,10 +894,7 @@ app.post('/register-commands', auth, async (req,res) => {
     try {
         await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
         res.json({ ok: true, message: '4 slash commands registrados correctamente' });
-    } catch(e) {
-        console.error('register-commands:', e.message);
-        res.json({ error: e.message });
-    }
+    } catch(e) { console.error('register-commands:', e.message); res.json({ error: e.message }); }
 });
 
 // ── Boot ───────────────────────────────────────────────────────────────────

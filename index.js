@@ -284,10 +284,6 @@ async function send(channelId, embed, imagenes) {
     }
 }
 
-// ── Embed builders con fields (más anchos y legibles) ─────────────────────
-
-// ── Embed builders ────────────────────────────────────────────────────────
-
 // ── Chequeo de antecedentes ────────────────────────────────────────────────
 async function getAntecedentes(nick) {
     if (!nick) return null;
@@ -611,6 +607,25 @@ client.on('interactionCreate', async interaction => {
             console.error('sync-staff:', e.message);
             await interaction.editReply(`❌ Error: ${e.message}`);
         }
+    }
+
+    // ── NUEVO: Reset reincidencias ─────────────────────────────────────────
+    if (cmd === 'reset-reincidencias') {
+        await interaction.deferReply({ ephemeral: true });
+        const callerDiscordId = interaction.user.id;
+        const users = await getServerUsers();
+        const caller = users.find(u => u.discordId === callerDiscordId);
+        if (!caller || caller.role !== 'admin') {
+            return await interaction.editReply('❌ Solo los admins del StaffPanel pueden usar este comando.');
+        }
+        const nick = interaction.options.getString('nick');
+        const key = HIST_KEY(nick);
+        if (redis) {
+            await redis.del(key);
+        } else {
+            if (global.historial) delete global.historial[key];
+        }
+        await interaction.editReply(`✅ Reincidencias de **${nick}** reseteadas correctamente.`);
     }
 });
 
@@ -991,13 +1006,7 @@ async function tryAutoLink(member) {
         const alreadyLinked = Object.values(map).includes(member.user.id);
         if (alreadyLinked) return;
 
-        // Buscar coincidencia con algún staff registrado en el panel
-        // El panel guarda usuarios en localStorage del cliente, pero el bot
-        // puede intentar matchear por username/displayName/nickname
         const staffNames = Object.keys(map);
-        // Si no hay staff en el mapa, no hay nada con qué comparar aún
-        // El match se hace cuando algún staff ya fue registrado manualmente
-        // y un nuevo miembro entra con el mismo nombre
         for (const staffName of staffNames) {
             if (
                 staffName.toLowerCase() === lower ||
@@ -1050,6 +1059,11 @@ async function registerCommands() {
         new SlashCommandBuilder()
             .setName('sync-staff')
             .setDescription('Sincroniza todos los miembros del servidor con el mapa de Discord IDs (usar 1 vez)')
+            .toJSON(),
+        new SlashCommandBuilder()
+            .setName('reset-reincidencias')
+            .setDescription('Resetea el historial de baneos de un jugador (solo admins)')
+            .addStringOption(o => o.setName('nick').setDescription('Nick del jugador de Minecraft').setRequired(true))
             .toJSON(),
     ];
     const rest = new REST({ version:'10' }).setToken(BOT_TOKEN);
